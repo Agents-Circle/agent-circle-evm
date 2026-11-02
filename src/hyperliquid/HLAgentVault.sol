@@ -94,6 +94,16 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
     /// swept.
     address public immutable platformBuilder;
 
+    /// USDC's token index on HyperCore.
+    ///
+    /// Held as a constructor argument rather than looked up. `CoreWriterLib`'s
+    /// address-based bridge helpers resolve an EVM token to its Core index through an
+    /// on-chain `TokenRegistry`, which would put a live external contract call on the
+    /// deposit and withdrawal path — a dependency that can be wrong, be upgraded, or not
+    /// exist on a given chain. This vault handles exactly one token, its index is a
+    /// constant of the chain, and passing it in at deploy removes the lookup entirely.
+    uint64 public immutable usdcCoreIndex;
+
     // ───────────────────────────────────────── per-clone state
 
     address public trader;
@@ -169,7 +179,8 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
         address registry_,
         address whitelist_,
         address platformTreasury_,
-        address platformBuilder_
+        address platformBuilder_,
+        uint64 usdcCoreIndex_
     ) {
         if (
             usdc_ == address(0) || registry_ == address(0) || whitelist_ == address(0)
@@ -181,6 +192,7 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
         whitelist = HLMarketWhitelist(whitelist_);
         platformTreasury = platformTreasury_;
         platformBuilder = platformBuilder_;
+        usdcCoreIndex = usdcCoreIndex_;
 
         // The implementation itself must never be initialisable. An uninitialised
         // implementation with a live `initialize` is an unowned vault anyone can claim,
@@ -236,10 +248,9 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
     }
 
     modifier onlyTraderOrAgent() {
-        if (
-            msg.sender != trader
-                && msg.sender != registry.getListing(listingId).agentAuthority
-        ) revert Errors.NotTraderOrAgent();
+        if (msg.sender != trader && msg.sender != registry.getListing(listingId).agentAuthority) {
+            revert Errors.NotTraderOrAgent();
+        }
         _;
     }
 
@@ -266,7 +277,7 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
 
         registry.notifyAumDelta(listingId, int256(uint256(amount)));
 
-        CoreWriterLib.bridgeToCore(address(usdc), amount);
+        CoreWriterLib.bridgeToCore(usdcCoreIndex, uint256(amount));
         // Bridged USDC lands in spot. Without this it is invisible to perp margin and
         // every order is dropped with no error anywhere.
         CoreWriterLib.transferUsdClass(amount, true);
@@ -318,6 +329,17 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
 
         uint64 maxCost = uint64((uint256(sz) * uint256(limitPx)) / SZ_PX_TO_USDC);
 
+        // Tracked *before* the cap check, not after, and the ordering is load-bearing.
+        // `_positionValue` sums tracked assets only, so checking first would value an
+        // untracked asset at zero and let the first vault-mode order on it ignore a
+        // position that already exists there.
+        //
+        // That is not hypothetical. In fast mode the agent trades off-chain through its
+        // API wallet and the vault sees none of it, so a vault switching back to vault
+        // mode can hold positions it never placed an order for. Tracking on sight is
+        // what stops the first such order being measured against nothing.
+        _track(asset);
+
         if (!reduceOnly) {
             if (maxCost == 0) revert Errors.ZeroAmount();
             uint64 reservedAfter = reserved + maxCost;
@@ -337,8 +359,6 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
             expiry: uint64(block.timestamp) + Constants.MAX_ORDER_LIFETIME,
             released: false
         });
-        _track(asset);
-
         emit OrderPlaced(cloid, asset, isBuy, sz, maxCost);
         CoreWriterLib.placeLimitOrder(asset, isBuy, limitPx, sz, reduceOnly, tif, cloid);
     }
@@ -453,8 +473,11 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
             int64 last = _lastSeenSzi[asset];
             if (now_ == last) continue;
 
-            uint64 delta = uint64(now_ > last ? uint64(uint128(int128(now_) - int128(last)))
-                                              : uint64(uint128(int128(last) - int128(now_))));
+            uint64 delta = uint64(
+                now_ > last
+                    ? uint64(uint128(int128(now_) - int128(last)))
+                    : uint64(uint128(int128(last) - int128(now_)))
+            );
             _lastSeenSzi[asset] = now_;
 
             // `szi` carries szDecimals and `markPx` carries (6 - szDecimals), so the
@@ -466,8 +489,7 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
             uint64 fee = uint64((uint256(notional) * l.executionFeeBps) / Constants.BPS);
             if (fee == 0) continue;
 
-            uint64 builderCut =
-                uint64((uint256(fee) * l.executionBuilderSplitBps) / Constants.BPS);
+            uint64 builderCut = uint64((uint256(fee) * l.executionBuilderSplitBps) / Constants.BPS);
             accruedBuilderFee += builderCut;
             accruedPlatformFee += fee - builderCut;
 
@@ -497,10 +519,7 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
     }
 
     /// Tighten-only, for the same reason overrides are stricter-only at initialisation.
-    function tightenRiskLimits(uint16 positionCapBps_, uint16 maxDrawdownBps_)
-        external
-        onlyTrader
-    {
+    function tightenRiskLimits(uint16 positionCapBps_, uint16 maxDrawdownBps_) external onlyTrader {
         if (positionCapBps_ == 0 || maxDrawdownBps_ == 0) revert Errors.ZeroAmount();
         if (positionCapBps_ > positionCapBps || maxDrawdownBps_ > maxDrawdownBps) {
             revert Errors.RiskOverrideNotStricter();
@@ -522,6 +541,24 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
     ///
     /// Two steps because Core → EVM is asynchronous. This one moves perp margin to spot
     /// and asks for the bridge; `finalizeWithdraw` pays out what actually arrived.
+    ///
+    /// ## One caveat on "works in every state", and it is a real one
+    ///
+    /// The Core → EVM leg is a `sendAsset`, and `hyper-evm-lib` notes that bridging a
+    /// non-HYPE token requires the sending account to hold **HYPE on Core** to cover the
+    /// transfer's gas. A vault with no HYPE therefore cannot complete the bridge, which
+    /// would make "withdrawal always works" false in exactly the circumstance nobody
+    /// tests: a vault that has never held HYPE.
+    ///
+    /// This is unresolved in this contract and must not be papered over. Three options,
+    /// none of them yet chosen: the factory funds each clone with a dust amount of HYPE
+    /// at deploy; `deposit` provisions HYPE out of the deposit; or the keeper tops vaults
+    /// up and the shortfall is surfaced to the trader. It is also the first thing the
+    /// testnet probe should measure, because the amount needed is not documented.
+    ///
+    /// Until it is settled, the honest claim is "withdrawal is never blocked by the
+    /// protocol" — the vault, the listing and the whitelist cannot stop it — rather than
+    /// "withdrawal always succeeds".
     function requestWithdraw(uint64 amount) external nonReentrant onlyTrader {
         if (amount == 0) revert Errors.ZeroAmount();
 
@@ -536,7 +573,7 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
         pendingWithdrawal += amount;
 
         CoreWriterLib.transferUsdClass(amount, false); // perp → spot
-        CoreWriterLib.bridgeToEvm(address(usdc), amount);
+        CoreWriterLib.bridgeToEvm(usdcCoreIndex, uint256(amount), true);
 
         emit WithdrawRequested(amount);
     }

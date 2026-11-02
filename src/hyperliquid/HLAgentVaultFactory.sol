@@ -34,9 +34,7 @@ contract HLAgentVaultFactory {
 
     address public immutable implementation;
 
-    event VaultDeployed(
-        address indexed vault, address indexed trader, bytes32 indexed listingId
-    );
+    event VaultDeployed(address indexed vault, address indexed trader, bytes32 indexed listingId);
 
     constructor(address implementation_) {
         if (implementation_ == address(0)) revert Errors.ZeroAddress();
