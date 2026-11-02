@@ -149,6 +149,7 @@ contract AgentRegistryTest is Test {
         IAgentRegistry.Listing memory l = registry.getListing(id);
         assertEq(uint256(l.status), uint256(IAgentRegistry.ListingStatus.Vetting));
         assertEq(l.performanceFeeBps, 0, "a listing that never passes must never earn");
+        assertEq(l.executionFeeBps, 0, "nor on turnover");
 
         vm.prank(governance);
         registry.approveListingAtLaunchTerms(id);
@@ -157,11 +158,28 @@ contract AgentRegistryTest is Test {
         assertEq(uint256(l.status), uint256(IAgentRegistry.ListingStatus.Live));
         assertEq(l.performanceFeeBps, Constants.DEFAULT_PERFORMANCE_FEE_BPS);
         assertEq(l.builderSplitBps, Constants.DEFAULT_BUILDER_SPLIT_BPS);
+        assertEq(l.executionFeeBps, Constants.DEFAULT_EXECUTION_FEE_BPS);
+        assertEq(l.executionBuilderSplitBps, Constants.DEFAULT_EXECUTION_BUILDER_SPLIT_BPS);
         assertEq(l.positionCapBps, Constants.DEFAULT_POSITION_CAP_BPS);
         assertEq(l.maxDrawdownBps, Constants.DEFAULT_MAX_DRAWDOWN_BPS);
     }
 
+    /// Launch terms, as a base for the guardrail tests to deviate from one field at a time.
+    function _launchTerms() internal pure returns (IAgentRegistry.Terms memory) {
+        return IAgentRegistry.Terms({
+            performanceFeeBps: Constants.DEFAULT_PERFORMANCE_FEE_BPS,
+            builderSplitBps: Constants.DEFAULT_BUILDER_SPLIT_BPS,
+            executionFeeBps: Constants.DEFAULT_EXECUTION_FEE_BPS,
+            executionBuilderSplitBps: Constants.DEFAULT_EXECUTION_BUILDER_SPLIT_BPS,
+            positionCapBps: Constants.DEFAULT_POSITION_CAP_BPS,
+            maxDrawdownBps: Constants.DEFAULT_MAX_DRAWDOWN_BPS
+        });
+    }
+
     /// A compromised multisig still cannot set a 100% performance fee.
+    ///
+    /// One field moved per case, from otherwise-valid launch terms, so a passing
+    /// assertion names exactly which bound held rather than only that *something* did.
     function test_governanceCannotExceedGuardrails() public {
         vm.startPrank(builder);
         registry.registerBuilder();
@@ -169,13 +187,78 @@ contract AgentRegistryTest is Test {
         bytes32 id = registry.submitListing(agent, keccak256("m"));
         vm.stopPrank();
 
+        IAgentRegistry.Terms memory t;
         vm.startPrank(governance);
-        vm.expectRevert(Errors.ParameterOutOfBounds.selector);
-        registry.approveListing(id, 10_000, 8_000, 1_200, 1_500); // 100% fee
 
+        t = _launchTerms();
+        t.performanceFeeBps = 10_000; // 100% of profit
         vm.expectRevert(Errors.ParameterOutOfBounds.selector);
-        registry.approveListing(id, 1_000, 1_000, 1_200, 1_500); // 10% builder split
+        registry.approveListing(id, t);
+
+        t = _launchTerms();
+        t.builderSplitBps = 1_000; // builder cut to 10%
+        vm.expectRevert(Errors.ParameterOutOfBounds.selector);
+        registry.approveListing(id, t);
+
+        t = _launchTerms();
+        t.executionFeeBps = Constants.MAX_EXECUTION_FEE_BPS + 1;
+        vm.expectRevert(Errors.ParameterOutOfBounds.selector);
+        registry.approveListing(id, t);
+
+        t = _launchTerms();
+        t.executionBuilderSplitBps = Constants.MIN_EXECUTION_BUILDER_SPLIT_BPS - 1;
+        vm.expectRevert(Errors.ParameterOutOfBounds.selector);
+        registry.approveListing(id, t);
+
+        t = _launchTerms();
+        t.executionBuilderSplitBps = 10_001; // over 100%
+        vm.expectRevert(Errors.ParameterOutOfBounds.selector);
+        registry.approveListing(id, t);
+
+        t = _launchTerms();
+        t.positionCapBps = 0;
+        vm.expectRevert(Errors.ParameterOutOfBounds.selector);
+        registry.approveListing(id, t);
+
+        t = _launchTerms();
+        t.positionCapBps = Constants.MAX_POSITION_CAP_BPS + 1;
+        vm.expectRevert(Errors.ParameterOutOfBounds.selector);
+        registry.approveListing(id, t);
+
+        t = _launchTerms();
+        t.maxDrawdownBps = 0;
+        vm.expectRevert(Errors.ParameterOutOfBounds.selector);
+        registry.approveListing(id, t);
+
+        t = _launchTerms();
+        t.maxDrawdownBps = Constants.MAX_DRAWDOWN_BPS_CEILING + 1;
+        vm.expectRevert(Errors.ParameterOutOfBounds.selector);
+        registry.approveListing(id, t);
+
+        // The listing is still in Vetting after nine rejections, and launch terms work.
+        registry.approveListing(id, _launchTerms());
         vm.stopPrank();
+
+        assertEq(
+            uint256(registry.getListing(id).status), uint256(IAgentRegistry.ListingStatus.Live)
+        );
+    }
+
+    /// Zero execution fee is a coherent listing to approve, unlike a zero position cap.
+    function test_zeroExecutionFeeIsAllowed() public {
+        vm.startPrank(builder);
+        registry.registerBuilder();
+        registry.stakeBond(25_000 * UNIT);
+        bytes32 id = registry.submitListing(agent, keccak256("m"));
+        vm.stopPrank();
+
+        IAgentRegistry.Terms memory t = _launchTerms();
+        t.executionFeeBps = 0;
+
+        vm.prank(governance);
+        registry.approveListing(id, t);
+
+        assertEq(registry.getListing(id).executionFeeBps, 0);
     }
 
     function test_attackerCannotApproveOwnListing() public {

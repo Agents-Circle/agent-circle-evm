@@ -194,6 +194,8 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
             status: ListingStatus.Vetting,
             performanceFeeBps: 0,
             builderSplitBps: 0,
+            executionFeeBps: 0,
+            executionBuilderSplitBps: 0,
             positionCapBps: 0,
             maxDrawdownBps: 0,
             submittedAt: uint64(block.timestamp),
@@ -203,49 +205,56 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
         emit ListingSubmitted(id, msg.sender, metadataHash);
     }
 
-    function approveListing(
-        bytes32 id,
-        uint16 performanceFeeBps,
-        uint16 builderSplitBps,
-        uint16 positionCapBps,
-        uint16 maxDrawdownBps
-    ) external onlyGovernance {
-        _approveListing(id, performanceFeeBps, builderSplitBps, positionCapBps, maxDrawdownBps);
+    function approveListing(bytes32 id, Terms calldata terms) external onlyGovernance {
+        _approveListing(id, terms);
     }
 
     /// Approve with the locked launch parameters. The common path.
     function approveListingAtLaunchTerms(bytes32 id) external onlyGovernance {
         _approveListing(
             id,
-            Constants.DEFAULT_PERFORMANCE_FEE_BPS,
-            Constants.DEFAULT_BUILDER_SPLIT_BPS,
-            Constants.DEFAULT_POSITION_CAP_BPS,
-            Constants.DEFAULT_MAX_DRAWDOWN_BPS
+            Terms({
+                performanceFeeBps: Constants.DEFAULT_PERFORMANCE_FEE_BPS,
+                builderSplitBps: Constants.DEFAULT_BUILDER_SPLIT_BPS,
+                executionFeeBps: Constants.DEFAULT_EXECUTION_FEE_BPS,
+                executionBuilderSplitBps: Constants.DEFAULT_EXECUTION_BUILDER_SPLIT_BPS,
+                positionCapBps: Constants.DEFAULT_POSITION_CAP_BPS,
+                maxDrawdownBps: Constants.DEFAULT_MAX_DRAWDOWN_BPS
+            })
         );
     }
 
-    function _approveListing(
-        bytes32 id,
-        uint16 performanceFeeBps,
-        uint16 builderSplitBps,
-        uint16 positionCapBps,
-        uint16 maxDrawdownBps
-    ) internal {
+    function _approveListing(bytes32 id, Terms memory t) internal {
         Listing storage l = _listings[id];
         if (l.status != ListingStatus.Vetting) revert Errors.ListingNotVetting();
 
+        // Every bound here is one a fully compromised multisig still cannot cross. The
+        // execution-fee pair is bounded in both directions for the same reason the
+        // performance split is: a ceiling stops the fee being used to drain a vault
+        // through churn, and a floor under the builder's share stops governance quietly
+        // reassigning the builder's half to the platform.
+        //
+        // Zero is permitted for the execution fee — unlike the position cap, where zero
+        // would mean a vault that cannot trade at all. A listing on zero execution fee is
+        // a coherent thing to approve, and may well be the right call for a low-turnover
+        // agent.
         if (
-            performanceFeeBps > Constants.MAX_PERFORMANCE_FEE_BPS
-                || builderSplitBps < Constants.MIN_BUILDER_SPLIT_BPS
-                || builderSplitBps > Constants.BPS || positionCapBps == 0
-                || positionCapBps > Constants.MAX_POSITION_CAP_BPS || maxDrawdownBps == 0
-                || maxDrawdownBps > Constants.MAX_DRAWDOWN_BPS_CEILING
+            t.performanceFeeBps > Constants.MAX_PERFORMANCE_FEE_BPS
+                || t.builderSplitBps < Constants.MIN_BUILDER_SPLIT_BPS
+                || t.builderSplitBps > Constants.BPS
+                || t.executionFeeBps > Constants.MAX_EXECUTION_FEE_BPS
+                || t.executionBuilderSplitBps < Constants.MIN_EXECUTION_BUILDER_SPLIT_BPS
+                || t.executionBuilderSplitBps > Constants.BPS || t.positionCapBps == 0
+                || t.positionCapBps > Constants.MAX_POSITION_CAP_BPS || t.maxDrawdownBps == 0
+                || t.maxDrawdownBps > Constants.MAX_DRAWDOWN_BPS_CEILING
         ) revert Errors.ParameterOutOfBounds();
 
-        l.performanceFeeBps = performanceFeeBps;
-        l.builderSplitBps = builderSplitBps;
-        l.positionCapBps = positionCapBps;
-        l.maxDrawdownBps = maxDrawdownBps;
+        l.performanceFeeBps = t.performanceFeeBps;
+        l.builderSplitBps = t.builderSplitBps;
+        l.executionFeeBps = t.executionFeeBps;
+        l.executionBuilderSplitBps = t.executionBuilderSplitBps;
+        l.positionCapBps = t.positionCapBps;
+        l.maxDrawdownBps = t.maxDrawdownBps;
         l.status = ListingStatus.Live;
 
         emit ListingApproved(id);
