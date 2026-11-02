@@ -1,8 +1,19 @@
 # ADR-0001: Vault topology — singleton versus per-vault clones
 
-**Status:** Proposed
-**Date:** 21 August 2026
+**Status:** Accepted — Option C, per-vault EIP-1167 clones
+**Date:** 21 August 2026 · accepted 2 November 2026
 **Deciders:** Protocol lead; anyone signing off on custody changes before audit
+
+> **Accepted 2 November 2026.** Option C is the decision, and it now applies to every
+> target rather than only Polygon. The Hyperliquid-first rebuild makes the case
+> stronger than the one argued below: on HyperEVM a vault's address *is* its HyperCore
+> account, so per-vault identity is not a convenience for attribution — it is the only
+> way a vault can hold a position at all. A singleton would give every trader in the
+> protocol one shared HyperCore account.
+>
+> `src/hyperliquid/HLAgentVault.sol` is therefore written as a clone target from the
+> start. Converting the Polygon `AgentVault` to clones is scheduled behind it; the
+> action items below still stand for that work.
 
 ## Context
 
@@ -190,6 +201,9 @@ custody model afterwards wastes the audit.
 - Whether `MAX_OPEN_ORDERS` still needs to be as tight once allowances are per-vault.
 
 ## Action items
+
+Items 1 and 7 are Polygon-only and move with the Polymarket pilot. Items 2–6 are now
+being done on HyperEVM first, where the clone topology lands with `HLAgentVaultFactory`.
 
 1. [ ] Confirm on Amoy that a contract can act as `order.maker` end to end — sign under
        `POLY_1271`, get matched by an operator, receive outcome tokens. This ADR rests on
