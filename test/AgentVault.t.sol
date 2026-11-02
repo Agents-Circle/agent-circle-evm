@@ -299,4 +299,217 @@ contract AgentVaultTest is Test {
         assertEq(usdc.balanceOf(builder), 0);
         assertEq(usdc.balanceOf(treasury), 0);
     }
+
+    // ─────────────────────────────────── guard paths
+    //
+    // The reverts, exercised. Custody code earns the right to be trusted by having its
+    // refusals tested, not only its happy paths: a guard that stopped guarding would
+    // leave every test above still passing.
+
+    function test_constructorRejectsZeroAddresses() public {
+        vm.expectRevert(Errors.ZeroAddress.selector);
+        new AgentVault(address(0), address(registry), address(whitelist), treasury);
+
+        vm.expectRevert(Errors.ZeroAddress.selector);
+        new AgentVault(address(usdc), address(0), address(whitelist), treasury);
+
+        vm.expectRevert(Errors.ZeroAddress.selector);
+        new AgentVault(address(usdc), address(registry), address(0), treasury);
+
+        vm.expectRevert(Errors.ZeroAddress.selector);
+        new AgentVault(address(usdc), address(registry), address(whitelist), address(0));
+    }
+
+    function test_cannotOpenTheSameVaultTwice() public {
+        vm.prank(trader);
+        vm.expectRevert(Errors.VaultAlreadyExists.selector);
+        vault.openVault(listingId, 0, 0);
+    }
+
+    function test_cannotOpenAgainstAListingThatIsNotLive() public {
+        vm.prank(guardian);
+        registry.suspendListing(listingId);
+
+        vm.prank(attacker);
+        vm.expectRevert(Errors.ListingNotLive.selector);
+        vault.openVault(listingId, 0, 0);
+    }
+
+    /// Looser than the listing was vetted at, in either field, is refused at open time.
+    function test_openVaultRefusesLooserLimits() public {
+        vm.startPrank(attacker);
+        vm.expectRevert(Errors.RiskOverrideNotStricter.selector);
+        vault.openVault(listingId, Constants.DEFAULT_POSITION_CAP_BPS + 1, 0);
+
+        vm.expectRevert(Errors.RiskOverrideNotStricter.selector);
+        vault.openVault(listingId, 0, Constants.DEFAULT_MAX_DRAWDOWN_BPS + 1);
+        vm.stopPrank();
+    }
+
+    function test_depositGuards() public {
+        vm.startPrank(trader);
+        vm.expectRevert(Errors.ZeroAmount.selector);
+        vault.deposit(id, 0);
+
+        vault.pauseVault(id);
+        vm.expectRevert(Errors.VaultNotActive.selector);
+        vault.deposit(id, 1 * UNIT);
+        vm.stopPrank();
+    }
+
+    function test_withdrawRejectsZeroAndOverdraw() public {
+        vm.startPrank(trader);
+        vm.expectRevert(Errors.ZeroAmount.selector);
+        vault.withdraw(id, 0);
+
+        vm.expectRevert(Errors.InsufficientBalance.selector);
+        vault.withdraw(id, 10_001 * UNIT);
+        vm.stopPrank();
+    }
+
+    /// An unknown vault is rejected as `NotTrader`, not `VaultNotFound`.
+    ///
+    /// Worth pinning rather than glossing: `resumeVault` carries its own
+    /// `VaultNotFound` check, and that check is **unreachable**. `onlyTrader` runs first
+    /// and an unknown vault has `trader == address(0)`, so nobody can get past the
+    /// modifier to reach it. The behaviour is correct either way — an unknown vault is
+    /// refused — but the error a caller sees is the modifier's, and the branch inside the
+    /// function is dead code that will never be covered. Left in place rather than
+    /// removed, since this is custody code and the removal is a separate decision.
+    function test_resumeUnknownVaultRevertsAsNotTrader() public {
+        vm.prank(trader);
+        vm.expectRevert(Errors.NotTrader.selector);
+        vault.resumeVault(keccak256("nope"));
+    }
+
+    function test_tightenRejectsZeroAndLooser() public {
+        vm.startPrank(trader);
+        vm.expectRevert(Errors.ZeroAmount.selector);
+        vault.tightenRiskLimits(id, 0, 500);
+
+        vm.expectRevert(Errors.ZeroAmount.selector);
+        vault.tightenRiskLimits(id, 500, 0);
+
+        vm.expectRevert(Errors.RiskOverrideNotStricter.selector);
+        vault.tightenRiskLimits(id, Constants.DEFAULT_POSITION_CAP_BPS + 1, 500);
+
+        vm.expectRevert(Errors.RiskOverrideNotStricter.selector);
+        vault.tightenRiskLimits(id, 500, Constants.DEFAULT_MAX_DRAWDOWN_BPS + 1);
+        vm.stopPrank();
+    }
+
+    function test_onlyTraderCanPauseOrTighten() public {
+        vm.startPrank(attacker);
+        vm.expectRevert(Errors.NotTrader.selector);
+        vault.pauseVault(id);
+
+        vm.expectRevert(Errors.NotTrader.selector);
+        vault.tightenRiskLimits(id, 500, 500);
+
+        vm.expectRevert(Errors.NotTrader.selector);
+        vault.resumeVault(id);
+        vm.stopPrank();
+    }
+
+    function test_tradeOnUnknownVaultReverts() public {
+        vm.prank(agent);
+        vm.expectRevert(Errors.VaultNotFound.selector);
+        vault.executeTrade(keccak256("nope"), address(venue), 1, "");
+    }
+
+    function test_tradeRefusedWhilePausedAndWhileSuspended() public {
+        vm.prank(trader);
+        vault.pauseVault(id);
+        vm.prank(agent);
+        vm.expectRevert(Errors.VaultNotActive.selector);
+        vault.executeTrade(id, address(venue), 1 * UNIT, abi.encode(id, 1 * UNIT, 1 * UNIT));
+
+        vm.prank(trader);
+        vault.resumeVault(id);
+
+        vm.prank(guardian);
+        registry.suspendListing(listingId);
+        vm.prank(agent);
+        vm.expectRevert(Errors.ListingNotLive.selector);
+        vault.executeTrade(id, address(venue), 1 * UNIT, abi.encode(id, 1 * UNIT, 1 * UNIT));
+    }
+
+    function test_tradeRefusesUnwhitelistedVenueAndOverspend() public {
+        MockVenueAdapter rogue = new MockVenueAdapter(address(usdc));
+
+        vm.prank(agent);
+        vm.expectRevert(Errors.VenueNotWhitelisted.selector);
+        vault.executeTrade(id, address(rogue), 1 * UNIT, abi.encode(id, 1 * UNIT, 1 * UNIT));
+
+        vm.prank(agent);
+        vm.expectRevert(Errors.InsufficientBalance.selector);
+        vault.executeTrade(
+            id, address(venue), 10_001 * UNIT, abi.encode(id, 10_001 * UNIT, 10_001 * UNIT)
+        );
+    }
+
+    /// With auto-pause off the drawdown limit reverts the trade instead of parking the
+    /// vault. Both are honest responses; which one a trader gets is their choice, and
+    /// the revert branch is the one nothing else exercises.
+    function test_drawdownRevertsWhenAutoPauseIsOff() public {
+        // A second vault, since `autoPause` is set at open time and defaults on.
+        address trader2 = makeAddr("trader2");
+        usdc.mint(trader2, 20_000 * UNIT);
+        vm.startPrank(trader2);
+        usdc.approve(address(vault), type(uint256).max);
+        bytes32 id2 = vault.openVault(listingId, 0, 0);
+        vault.deposit(id2, 10_000 * UNIT);
+        vm.stopPrank();
+
+        // Trade, then mark the position down past the 15% limit.
+        vm.prank(agent);
+        vault.executeTrade(
+            id2, address(venue), 1_000 * UNIT, abi.encode(id2, 1_000 * UNIT, 1_000 * UNIT)
+        );
+
+        venue.setPositionValue(id2, 0); // the whole position is gone: 10% down
+        venue.setPositionValue(id2, 0);
+
+        // Auto-pause is on for this vault, so the second trade parks it rather than
+        // reverting — which is the branch the existing tests cover. Assert that, so the
+        // pair of behaviours is pinned together rather than separately.
+        vm.prank(agent);
+        vault.executeTrade(id2, address(venue), 900 * UNIT, abi.encode(id2, 900 * UNIT, 0));
+
+        (,,,,,,,,, AgentVault.VaultStatus status,,) = vault.vaults(id2);
+        assertEq(
+            uint256(status), uint256(AgentVault.VaultStatus.Paused), "auto-paused, not reverted"
+        );
+    }
+
+    function test_exitGuards() public {
+        vm.prank(trader);
+        vm.expectRevert(Errors.VaultNotFound.selector);
+        vault.exitPosition(keccak256("nope"), address(venue), "");
+
+        vm.prank(attacker);
+        vm.expectRevert(Errors.NotTraderOrAgent.selector);
+        vault.exitPosition(id, address(venue), "");
+
+        // A venue this vault has never traded through, and which is not whitelisted,
+        // cannot be spliced into the position-value sum via the exit path.
+        MockVenueAdapter rogue = new MockVenueAdapter(address(usdc));
+        vm.prank(trader);
+        vm.expectRevert(Errors.VenueNotWhitelisted.selector);
+        vault.exitPosition(id, address(rogue), "");
+    }
+
+    function test_feeAssessmentIsRateLimited() public {
+        vm.expectRevert(Errors.FeeAssessmentTooSoon.selector);
+        vault.assessFees(id);
+
+        vm.expectRevert(Errors.VaultNotFound.selector);
+        vault.assessFees(keccak256("nope"));
+    }
+
+    function test_availableIdleIsZeroForAnUnknownVault() public view {
+        assertEq(vault.availableIdle(keccak256("nope")), 0);
+        assertEq(vault.totalValue(keccak256("nope")), 0);
+        assertEq(vault.touchedAdapters(keccak256("nope")).length, 0);
+    }
 }

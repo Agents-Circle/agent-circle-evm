@@ -28,14 +28,38 @@ the fastest way to see what this does.
 
 | | |
 |---|---|
-| Tests | 86 passing |
-| Line coverage | 96% (`HighWaterMark` and `VenueWhitelist` at 100%) |
+| Tests | 134 passing |
+| Line coverage | 98.9% (`VenueWhitelist` at 100%) |
+| Branch coverage | 85.8% (`AgentRegistry` and `VenueWhitelist` at 100%) |
+| Function coverage | 100% |
 | Local deployment | Verified — contracts deployed and the full journey driven against a live node |
 | Testnet | Not yet deployed to Amoy |
 | Audit | Not started |
 
-Branch coverage is 51%, and that number is honest: most unexercised branches are revert
-paths on parameter validation. Worth closing before an audit, not before a conversation.
+Branch coverage was 51% and is now 85.8%. The gap closed was almost entirely revert
+paths: a guard whose refusal is never exercised is a guard nobody has proved refuses for
+the reason its name claims, and one that silently stopped guarding would have left every
+test still passing. `AgentVault` is the remaining 75%, and what is left there is mostly
+the unreachable arms of compound conditionals.
+
+Two honest footnotes, because the alternative is numbers that flatter:
+
+**`HighWaterMark` reports 90.48% lines and will not report more.** The two uncovered
+lines are the bare `return s;` at the end of `onDeposit` and `onWithdraw`. The statements
+above them run 315 and 266 times respectively; returning an already-mutated memory struct
+compiles to no distinct instruction, so the line gets no coverage attributed to it and no
+test can change that. Branch and function coverage on the library are both 100%. The
+fix would be to write the functions with named returns, which is a change to the most
+correctness-critical file in the repository made to satisfy a reporting artifact — worth
+doing deliberately, not quietly.
+
+**`AgentVault.resumeVault` contains a branch that cannot be reached.** Its
+`VaultNotFound` check sits behind `onlyTrader`, and an unknown vault has
+`trader == address(0)`, so the modifier always rejects first and a caller sees
+`NotTrader`. The behaviour is right — an unknown vault is refused — but the error is the
+modifier's and the check inside the function is dead. Left in place, with a test pinning
+the actual revert, rather than removed: it is custody code and the removal deserves its
+own review.
 
 ---
 
