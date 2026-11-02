@@ -31,3 +31,64 @@ jobs:
         # --ir-minimum because coverage disables the optimizer, and the generated getter
         # for the twelve-field Vault struct goes stack-too-deep without it.
         run: forge coverage --ir-minimum --no-match-coverage "(test|script)"
+
+  # The locked launch parameters are written out four times — JSON, Solidity, Anchor,
+  # docs. This fails the build when any of them disagree. Its own job so that parameter
+  # drift reads as parameter drift in the checks list, rather than as a test failure.
+  params:
+    runs-on: ubuntu-latest
+    steps:
+      # Checked out into a named directory rather than the workspace root, so the other
+      # two repos can sit beside it as siblings — which is the layout the checker already
+      # expects on a developer's machine. `actions/checkout` refuses any path outside the
+      # workspace, so `../` from the root is not available.
+      - uses: actions/checkout@v4
+        with:
+          path: agent-circle-evm
+
+      # Each sibling is tried at the *same branch name* first, then at its default
+      # branch. A parameter change nearly always spans repositories — the number moves in
+      # Solidity, in Anchor and in the docs together — so comparing a feature branch here
+      # against `main` there would report drift that the merge resolves, and would make
+      # the check something people learn to ignore. Matching branch names is how the three
+      # halves of one change find each other.
+      #
+      # Neither checkout may fail the job: the checker falls back to raw GitHub by itself,
+      # and a genuinely missing file is reported as drift rather than as a broken runner.
+      - id: programs_branch
+        uses: actions/checkout@v4
+        with:
+          repository: Agents-Circle/agent-circle-programs
+          ref: ${{ github.head_ref || github.ref_name }}
+          path: agent-circle-programs
+        continue-on-error: true
+
+      - if: steps.programs_branch.outcome == 'failure'
+        uses: actions/checkout@v4
+        with:
+          repository: Agents-Circle/agent-circle-programs
+          path: agent-circle-programs
+        continue-on-error: true
+
+      - id: docs_branch
+        uses: actions/checkout@v4
+        with:
+          repository: Agents-Circle/mintlify-docs
+          ref: ${{ github.head_ref || github.ref_name }}
+          path: mintlify-docs
+        continue-on-error: true
+
+      - if: steps.docs_branch.outcome == 'failure'
+        uses: actions/checkout@v4
+        with:
+          repository: Agents-Circle/mintlify-docs
+          path: mintlify-docs
+        continue-on-error: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check locked parameters
+        working-directory: agent-circle-evm
+        run: python3 script/check-params.py

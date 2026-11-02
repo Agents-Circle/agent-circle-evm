@@ -1,4 +1,4 @@
-.PHONY: install build test journey gas coverage fmt lint anvil deploy-local clean
+.PHONY: install build test journey gas coverage params params-write fmt lint anvil deploy-local clean
 
 install:
 	forge install
@@ -20,6 +20,17 @@ coverage:
 	# --ir-minimum because coverage disables the optimizer, and the generated getter for
 	# the twelve-field Vault struct goes stack-too-deep without it.
 	forge coverage --ir-minimum --no-match-coverage "(test|script)"
+
+# Fails if the locked parameters have drifted between the JSON, Solidity, Anchor and
+# the docs. Reads the Anchor constants and the docs page from sibling checkouts when
+# they are there, and from raw GitHub otherwise.
+params:
+	python3 script/check-params.py
+
+# Regenerates the docs parameter table from parameters.json. Needs mintlify-docs beside
+# this repo.
+params-write:
+	python3 script/check-params.py --write
 
 fmt:
 	forge fmt

@@ -43,6 +43,10 @@ RUST_RAW = (
     "main/programs/agent-registry/src/constants.rs"
 )
 DOCS_LOCAL = REPO.parent / "mintlify-docs" / "concepts" / "parameters.mdx"
+DOCS_RAW = (
+    "https://raw.githubusercontent.com/Agents-Circle/mintlify-docs/"
+    "main/concepts/parameters.mdx"
+)
 
 SECONDS_PER = {"seconds": 1, "minutes": 60, "hours": 3600, "days": 86400, "weeks": 604800}
 
@@ -308,30 +312,43 @@ def render_docs_table(params: dict) -> str:
     return "\n".join(lines)
 
 
-def check_docs(params: dict, write: bool) -> list[str]:
-    if not DOCS_LOCAL.exists():
-        return [
-            f"{DOCS_LOCAL} does not exist. The docs are one of the three places these "
-            f"numbers live; create the page (run with --write) rather than skipping it."
-        ]
+def read_docs_source() -> tuple[str, str]:
+    """The page text, and where it came from. Raises `Drift` if neither is reachable."""
+    if DOCS_LOCAL.exists():
+        return DOCS_LOCAL.read_text(), f"sibling checkout ({DOCS_LOCAL})"
+    try:
+        with urllib.request.urlopen(DOCS_RAW, timeout=30) as resp:
+            return resp.read().decode(), f"raw GitHub ({DOCS_RAW})"
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise Drift(
+            f"could not read the docs parameter table: no checkout at {DOCS_LOCAL} and "
+            f"fetching {DOCS_RAW} failed ({exc}). The docs are one of the four places "
+            f"these numbers live, so this is a failure, not something to skip."
+        ) from exc
 
-    text = DOCS_LOCAL.read_text()
+
+def check_docs(params: dict, write: bool) -> list[str]:
+    text, origin = read_docs_source()
+    print(f"  docs table read from {origin}")
     expected = render_docs_table(params)
 
     if BEGIN not in text or END not in text:
-        return [f"{DOCS_LOCAL.name} has no generated block; run --write to insert one"]
+        return ["parameters.mdx has no generated block; run --write to insert one"]
 
     start, end = text.index(BEGIN), text.index(END) + len(END)
     current = text[start:end]
     if current == expected:
         return []
     if write:
+        if not DOCS_LOCAL.exists():
+            return ["--write needs a local mintlify-docs checkout beside this repo"]
         DOCS_LOCAL.write_text(text[:start] + expected + text[end:])
         print(f"  rewrote the generated table in {DOCS_LOCAL}")
         return []
     return [
-        f"{DOCS_LOCAL.name}'s parameter table disagrees with parameters.json. "
-        f"Run `python3 script/check-params.py --write` and commit the result."
+        "parameters.mdx's table disagrees with parameters.json. Run "
+        "`python3 script/check-params.py --write` in a checkout with mintlify-docs "
+        "beside it, and commit the result."
     ]
 
 
@@ -357,11 +374,13 @@ def main() -> int:
     except Drift as exc:
         problems.append(str(exc))
 
-    if args.skip_docs or (not DOCS_LOCAL.exists() and not args.write):
-        if not DOCS_LOCAL.exists():
-            print(f"  skipping docs: no checkout at {DOCS_LOCAL}")
+    if args.skip_docs:
+        print("  skipping docs (--skip-docs)")
     else:
-        problems += check_docs(params, args.write)
+        try:
+            problems += check_docs(params, args.write)
+        except Drift as exc:
+            problems.append(str(exc))
 
     for note in params.get("parity_exceptions", []):
         print(f"  known parity exception: {note['item']} — {note['reason'][:60]}…")
