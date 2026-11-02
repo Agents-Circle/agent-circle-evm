@@ -28,6 +28,8 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
     address public governance;
     address public guardian;
     address public vault;
+    /// Clone factory whose children may move AUM figures. See `setVaultFactory`.
+    address public vaultFactory;
 
     /// Bond required for each tier, ascending.
     uint256[3] public tierBonds;
@@ -55,6 +57,7 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
     event ListingSuspended(bytes32 indexed listingId, address indexed by);
     event AgentAuthorityChanged(bytes32 indexed listingId, address indexed next);
     event VaultSet(address indexed vault);
+    event VaultFactorySet(address indexed factory);
     event GuardianChanged(address indexed previous, address indexed next);
     event AgentBondDiscountSet(uint16 discountBps);
 
@@ -296,7 +299,7 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
     // ────────────────────────────────────────────────────────── AUM
 
     function notifyAumDelta(bytes32 id, int256 delta) external {
-        if (msg.sender != vault) revert Errors.NotVault();
+        if (!_isAuthorisedVault(msg.sender)) revert Errors.NotVault();
         Listing storage l = _listings[id];
         if (l.status == ListingStatus.None) revert Errors.ListingNotFound();
 
@@ -330,6 +333,40 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
         if (vault_ == address(0)) revert Errors.ZeroAddress();
         vault = vault_;
         emit VaultSet(vault_);
+    }
+
+    /// Register the clone factory whose children may move AUM figures.
+    ///
+    /// One-shot for the same reason `setVault` is, and the reason is sharper here. With a
+    /// singleton, a re-settable pointer would let a compromised key authorise one rogue
+    /// contract. With a factory it would authorise an unbounded *set* of them, since the
+    /// attacker's factory attests whatever it likes. This is the new trust edge ADR-0001
+    /// names, and making it unchangeable is most of what makes it safe.
+    ///
+    /// Both paths coexist: Polygon runs a singleton vault, HyperEVM runs clones, and one
+    /// registry deployment serves one chain. Leaving `vault` unset on HyperEVM and
+    /// `vaultFactory` unset on Polygon is the expected configuration, not an oversight.
+    function setVaultFactory(address factory_) external onlyGovernance {
+        if (vaultFactory != address(0)) revert Errors.AlreadySet();
+        if (factory_ == address(0)) revert Errors.ZeroAddress();
+        vaultFactory = factory_;
+        emit VaultFactorySet(factory_);
+    }
+
+    /// Whether `caller` may move AUM figures.
+    ///
+    /// The factory is asked rather than trusted to have told us: `isVault` reads a
+    /// mapping only the factory's own deploy path writes, so a contract cannot vouch for
+    /// itself. A `staticcall` with a decoded bool, rather than a plain interface call, so
+    /// that a factory address pointing at something which is not a factory fails closed
+    /// instead of reverting the trader's deposit.
+    function _isAuthorisedVault(address caller) internal view returns (bool) {
+        if (caller == vault && vault != address(0)) return true;
+        if (vaultFactory == address(0)) return false;
+
+        (bool ok, bytes memory ret) =
+            vaultFactory.staticcall(abi.encodeWithSignature("isVault(address)", caller));
+        return ok && ret.length == 32 && abi.decode(ret, (bool));
     }
 
     function setGuardian(address next) external onlyGovernance {
