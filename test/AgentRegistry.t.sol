@@ -261,6 +261,59 @@ contract AgentRegistryTest is Test {
         assertEq(registry.getListing(id).executionFeeBps, 0);
     }
 
+    /// The $AGENT discount ships off, and off must mean "changes nothing".
+    function test_bondDiscountIsDisabledAndInert() public {
+        assertEq(registry.agentBondDiscountBps(), 0);
+        assertEq(registry.requiredBond(1), registry.tierBonds(0));
+        assertEq(registry.requiredBond(2), registry.tierBonds(1));
+        assertEq(registry.requiredBond(3), registry.tierBonds(2));
+        assertEq(registry.requiredBond(0), 0, "tier 0 requires nothing and unlocks nothing");
+        assertEq(registry.requiredBond(4), 0, "no fourth tier");
+    }
+
+    /// Governance cannot discount the bond away. Half is the most the deterrent may give
+    /// up, because the rest of it has to stay in an asset the platform cannot print.
+    function test_bondDiscountIsCappedAtHalf() public {
+        vm.prank(governance);
+        vm.expectRevert(Errors.ParameterOutOfBounds.selector);
+        registry.setAgentBondDiscount(Constants.MAX_AGENT_BOND_DISCOUNT_BPS + 1);
+
+        vm.prank(governance);
+        registry.setAgentBondDiscount(Constants.MAX_AGENT_BOND_DISCOUNT_BPS);
+        assertEq(registry.requiredBond(1), registry.tierBonds(0) / 2);
+    }
+
+    function test_onlyGovernanceCanSetBondDiscount() public {
+        vm.prank(builder);
+        vm.expectRevert(Errors.NotGovernance.selector);
+        registry.setAgentBondDiscount(1_000);
+    }
+
+    /// Enabling the discount hands back collateral that is backing live capital — but it
+    /// must not let a builder drop below the tier covering their AUM. The discount
+    /// changes what a tier costs, never what it covers.
+    function test_discountDoesNotLetBuilderUnderCoverLiveAum() public {
+        bytes32 id = _registeredBuilder();
+
+        vm.prank(vaultAddr);
+        registry.notifyAumDelta(id, int256(20_000 * UNIT));
+
+        vm.prank(governance);
+        registry.setAgentBondDiscount(Constants.MAX_AGENT_BOND_DISCOUNT_BPS);
+
+        // Tier still covers the AUM, so the builder keeps it...
+        assertEq(registry.getBuilder(builder).tier, 1);
+        assertEq(registry.aumCeiling(builder), 25_000 * UNIT);
+
+        // ...and still cannot withdraw to a tier that would not.
+        vm.startPrank(builder);
+        registry.requestUnbond(registry.getBuilder(builder).bondAmount);
+        vm.warp(block.timestamp + 15 days);
+        vm.expectRevert(Errors.BondBelowAumCoverage.selector);
+        registry.withdrawBond();
+        vm.stopPrank();
+    }
+
     function test_attackerCannotApproveOwnListing() public {
         vm.startPrank(builder);
         registry.registerBuilder();

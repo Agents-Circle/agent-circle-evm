@@ -43,17 +43,25 @@ paths on parameter validation. Worth closing before an audit, not before a conve
 
 **`AgentRegistry`** — builder identity, agent listings, staked bonds.
 
-A builder posts a bond and the bond buys a tier. The tier caps how much trader capital
-that builder may have under management across *all* their listings at once. Per-builder
-rather than per-listing on purpose: a builder able to defraud across three agents is
-exposed for the total, not for each one separately.
+A builder posts a bond in **USDC** and the bond buys a tier. The tier caps how much
+trader capital that builder may have under management across *all* their listings at
+once. Per-builder rather than per-listing on purpose: a builder able to defraud across
+three agents is exposed for the total, not for each one separately.
 
-| Tier | Bond | AUM ceiling |
+| Tier | Bond (USDC) | AUM ceiling |
 |---|---|---|
 | 0 | — | none; cannot take capital |
-| 1 | 25,000 | 25,000 |
-| 2 | 100,000 | 150,000 |
-| 3 | 400,000 | 1,000,000 |
+| 1 | 2,500 | 25,000 |
+| 2 | 10,000 | 150,000 |
+| 3 | 40,000 | 1,000,000 |
+
+Roughly 10% of the ceiling each tier unlocks. Below that the bond is theatre: a builder
+who can defraud $25,000 for a $2,500 stake will. USDC rather than a token the platform
+issues, because a bond denominated in $AGENT is a bond whose value the platform controls,
+and whose value collapses in exactly the scenario where traders need to be made whole.
+`setAgentBondDiscount` can later let staked $AGENT substitute for up to half of it — the
+hook ships disabled and capped, and the comment on it is worth reading before anyone
+enables it.
 
 Listings carry zero economics until governance approves them, so a listing that never
 passes vetting can never earn.
@@ -101,6 +109,7 @@ over a plain struct so every rule is unit-testable in isolation.
 | Listing fee | 0 |
 | Performance fee | 10% of profit above the high-water mark |
 | Builder / platform split | 80 / 20 |
+| Execution fee | 2 bps of notional traded, split 50 / 50 |
 | Default position cap | 12% of vault value |
 | Default max drawdown | 15% from the mark |
 | Unbonding period | 14 days |
@@ -108,6 +117,20 @@ over a plain struct so every rule is unit-testable in isolation.
 
 Governance can tune these per listing but cannot exceed the guardrails in
 `Constants.sol` — a fully compromised multisig still cannot set a 100% performance fee.
+
+The execution fee is charged on notional that actually traded, never on capital under
+management, so there is still no management fee and there is not going to be one: an idle
+vault pays nothing however long it sits. It does create an incentive the performance fee
+does not, because a builder earns on turnover whether or not the turnover made money. The
+guardrail caps it at 10 bps, and the real checks on it are outside these contracts —
+agents ranked on net-of-fee returns, turnover shown on every listing, and an automatic
+flag when a listing's fees exceed its gross profit over thirty days.
+
+These numbers live in `params/parameters.json`, and `script/check-params.py` fails CI if
+they drift from here, from the Anchor constants, or from the docs. That check exists
+because they had already drifted: the Anchor side bounded the position cap and drawdown
+limit only against 10,000 bps, so it would have approved a listing this implementation
+rejects.
 
 ---
 

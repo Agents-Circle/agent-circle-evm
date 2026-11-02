@@ -19,12 +19,18 @@ contract Deploy is Script {
 
     function run() external returns (AgentRegistry registry, AgentVault vault, VenueWhitelist wl) {
         address quote = vm.envOr("QUOTE_TOKEN", POLYGON_USDC);
-        address bondToken = vm.envAddress("BOND_TOKEN");
+        // Bonds are posted in USDC, not in a token the platform issues: a bond
+        // denominated in $AGENT is a bond whose value the platform controls, and the
+        // deterrent is only as real as the collateral. Still configurable, because the
+        // quote and bond tokens differ per chain.
+        address bondToken = vm.envOr("BOND_TOKEN", quote);
         address governance = vm.envAddress("GOVERNANCE");
         address guardian = vm.envAddress("GUARDIAN");
         address treasury = vm.envAddress("TREASURY");
 
-        uint256[3] memory tierBonds = [uint256(25_000 * UNIT), 100_000 * UNIT, 400_000 * UNIT];
+        // USDC. Roughly 10% of the ceiling each tier unlocks — below that the bond is
+        // theatre, and a builder who can defraud $25k for a $2.5k stake will.
+        uint256[3] memory tierBonds = [uint256(2_500 * UNIT), 10_000 * UNIT, 40_000 * UNIT];
         uint256[3] memory tierCeilings = [uint256(25_000 * UNIT), 150_000 * UNIT, 1_000_000 * UNIT];
 
         vm.startBroadcast();

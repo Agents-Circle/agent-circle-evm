@@ -27,14 +27,15 @@ contract DeployLocal is Script {
 
         vm.startBroadcast(pk);
 
+        // One token for both roles on a throwaway chain: bonds are posted in USDC now,
+        // so there is no second token to mock.
         MockERC20 usdc = new MockERC20("USD Coin", "USDC", 6);
-        MockERC20 agentToken = new MockERC20("Agent", "AGENT", 6);
 
         AgentRegistry registry = new AgentRegistry(
             deployer, // governance
             deployer, // guardian
-            address(agentToken),
-            [uint256(25_000 * UNIT), 100_000 * UNIT, 400_000 * UNIT],
+            address(usdc), // bonds in USDC
+            [uint256(2_500 * UNIT), 10_000 * UNIT, 40_000 * UNIT],
             [uint256(25_000 * UNIT), 150_000 * UNIT, 1_000_000 * UNIT],
             Constants.DEFAULT_UNBOND_PERIOD
         );
@@ -47,10 +48,10 @@ contract DeployLocal is Script {
         registry.setVault(address(vault));
 
         // Builder journey, all as the deployer for simplicity on a throwaway chain.
-        agentToken.mint(deployer, 25_000 * UNIT);
-        agentToken.approve(address(registry), type(uint256).max);
+        usdc.mint(deployer, 2_500 * UNIT);
+        usdc.approve(address(registry), type(uint256).max);
         registry.registerBuilder();
-        registry.stakeBond(25_000 * UNIT);
+        registry.stakeBond(2_500 * UNIT);
         bytes32 listingId = registry.submitListing(deployer, keccak256("strategy-v1"));
         registry.approveListingAtLaunchTerms(listingId);
 
@@ -63,7 +64,6 @@ contract DeployLocal is Script {
         vm.stopBroadcast();
 
         console2.log("USDC:          ", address(usdc));
-        console2.log("AGENT:         ", address(agentToken));
         console2.log("AgentRegistry: ", address(registry));
         console2.log("VenueWhitelist:", address(whitelist));
         console2.log("AgentVault:    ", address(vault));

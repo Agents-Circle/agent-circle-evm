@@ -34,6 +34,13 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
     /// AUM ceiling unlocked by each tier, ascending.
     uint256[3] public tierCeilings;
 
+    /// How much of a tier's USDC bond staked $AGENT may substitute for. Zero, and it
+    /// stays zero: $AGENT does not exist. The hook is here so the shape is settled and
+    /// tested before there is any pressure to ship it in a hurry.
+    ///
+    /// Read the warning on `setAgentBondDiscount` before enabling it.
+    uint16 public agentBondDiscountBps;
+
     mapping(address => Builder) internal _builders;
     mapping(bytes32 => Listing) internal _listings;
 
@@ -49,6 +56,7 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
     event AgentAuthorityChanged(bytes32 indexed listingId, address indexed next);
     event VaultSet(address indexed vault);
     event GuardianChanged(address indexed previous, address indexed next);
+    event AgentBondDiscountSet(uint16 discountBps);
 
     modifier onlyGovernance() {
         if (msg.sender != governance) revert Errors.NotGovernance();
@@ -330,6 +338,31 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
         guardian = next;
     }
 
+    /// Let staked $AGENT substitute for part of a tier's USDC bond. Disabled at zero.
+    ///
+    /// **This weakens every bond already posted, immediately and retroactively.** A
+    /// builder at tier 2 on exactly the tier-2 bond stays at tier 2 and may now withdraw
+    /// the difference, so turning this on hands back collateral that is currently
+    /// backing live trader capital. That is not a side effect to be managed; it is what
+    /// the function does.
+    ///
+    /// It is deliberately left untimelocked and bounded instead, because a timelock here
+    /// would be security theatre: the bound is what makes a compromised multisig unable
+    /// to zero the bonds, and a two-day delay on a change that only ever reduces
+    /// collateral protects nobody who was not already watching. The real control is that
+    /// `MAX_AGENT_BOND_DISCOUNT_BPS` caps it at half, whatever governance intends.
+    ///
+    /// Before enabling it, the AUM coverage check in `withdrawBond` should be the thing
+    /// that holds — and it is: a builder still cannot withdraw below the tier covering
+    /// their live AUM. The discount lowers what that tier costs, not what it covers.
+    function setAgentBondDiscount(uint16 discountBps) external onlyGovernance {
+        if (discountBps > Constants.MAX_AGENT_BOND_DISCOUNT_BPS) {
+            revert Errors.ParameterOutOfBounds();
+        }
+        agentBondDiscountBps = discountBps;
+        emit AgentBondDiscountSet(discountBps);
+    }
+
     // ────────────────────────────────────────────────────────── views
 
     function getListing(bytes32 id) external view returns (Listing memory) {
@@ -348,8 +381,21 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
     /// capital at all.
     function _tierFor(uint256 bond) internal view returns (uint8 tier) {
         for (uint256 i; i < 3; ++i) {
-            if (bond >= tierBonds[i]) tier = uint8(i + 1);
+            if (bond >= requiredBond(i + 1)) tier = uint8(i + 1);
         }
+    }
+
+    /// USDC a builder must post to reach `tier`, after any $AGENT discount.
+    ///
+    /// Identical to `tierBonds[tier - 1]` while the discount is off, which is its
+    /// permanent state until $AGENT exists. Routed through a function rather than read
+    /// directly so that turning the discount on later changes one place instead of
+    /// every tier comparison, and so the disabled path is the one under test today.
+    function requiredBond(uint256 tier) public view returns (uint256) {
+        if (tier == 0 || tier > 3) return 0;
+        uint256 full = tierBonds[tier - 1];
+        if (agentBondDiscountBps == 0) return full;
+        return full - (full * agentBondDiscountBps) / Constants.BPS;
     }
 
     function _ceilingFor(uint8 tier) internal view returns (uint256) {

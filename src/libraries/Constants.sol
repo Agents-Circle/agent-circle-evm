@@ -54,6 +54,16 @@ library Constants {
     /// than a starting point. Governance may raise the builder's share and never cut it.
     uint16 internal constant MIN_EXECUTION_BUILDER_SPLIT_BPS = 5_000;
 
+    /// Most of a tier's USDC bond that staked $AGENT may ever substitute for.
+    ///
+    /// Half, and not more, because the discount trades away exactly the thing the bond
+    /// is for. A bond deters in proportion to what it costs the builder to lose, and
+    /// $AGENT is a token the platform issues — so a bond fully denominated in it is a
+    /// bond whose value the platform controls, and whose value collapses in precisely
+    /// the scenario where traders need to be made whole. Capping the substitution at
+    /// half keeps at least half the deterrent in an asset nobody here can print.
+    uint16 internal constant MAX_AGENT_BOND_DISCOUNT_BPS = 5_000;
+
     // ── timing
     uint64 internal constant DEFAULT_UNBOND_PERIOD = 14 days;
     uint64 internal constant MAX_UNBOND_PERIOD = 90 days;

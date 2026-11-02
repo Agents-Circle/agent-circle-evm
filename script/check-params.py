@@ -200,6 +200,16 @@ def expectations(params: dict) -> list[tuple[str, int, list[str], list[str]]]:
         )
     )
     rows.append(("bps denominator", params["bps_denominator"], ["BPS"], ["BPS_DENOMINATOR"]))
+
+    discount = params["bonding"]["agent_bond_discount"]
+    rows.append(
+        (
+            "agent bond discount cap",
+            discount["max_discount_bps"],
+            discount.get("solidity", []),
+            discount.get("rust", []),
+        )
+    )
     return rows
 
 
