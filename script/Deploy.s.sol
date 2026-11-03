@@ -27,6 +27,7 @@ contract Deploy is Script {
         address governance = vm.envAddress("GOVERNANCE");
         address guardian = vm.envAddress("GUARDIAN");
         address treasury = vm.envAddress("TREASURY");
+        require(governance != guardian, "GUARDIAN must not be GOVERNANCE");
 
         // USDC. Roughly 10% of the ceiling each tier unlocks — below that the bond is
         // theatre, and a builder who can defraud $25k for a $2.5k stake will.
