@@ -32,6 +32,37 @@ jobs:
         # for the twelve-field Vault struct goes stack-too-deep without it.
         run: forge coverage --ir-minimum --no-match-coverage "(test|script)"
 
+  # Slither over `src/` only. Report-only for now: the first run's findings have not been
+  # triaged, and a gate nobody has calibrated is one people learn to override. Findings
+  # land in the repository's Security tab as SARIF. Once the baseline is triaged —
+  # each finding fixed or recorded with a reason in docs/known-issues — change `fail-on`
+  # to `medium`, so a new finding fails the build.
+  static-analysis:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Slither
+        id: slither
+        uses: crytic/slither-action@v0.4.1
+        with:
+          fail-on: none
+          slither-config: slither.config.json
+          sarif: results.sarif
+
+      - name: Upload findings
+        if: always() && steps.slither.outputs.sarif != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ steps.slither.outputs.sarif }}
+
   # The locked launch parameters are written out four times — JSON, Solidity, Anchor,
   # docs. This fails the build when any of them disagree. Its own job so that parameter
   # drift reads as parameter drift in the checks list, rather than as a test failure.

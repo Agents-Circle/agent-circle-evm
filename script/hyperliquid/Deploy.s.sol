@@ -39,6 +39,15 @@ contract DeployHyperliquid is Script {
         address treasury = vm.envAddress("TREASURY");
         address platformBuilder = vm.envAddress("PLATFORM_BUILDER");
 
+        // Neither can be corrected after the fact: governance has no setter, and a
+        // guardian that is governance can add markets, which is the one power it must
+        // never have. Refuse here rather than discover it in VerifyDeploy.
+        require(governance != guardian, "GUARDIAN must not be GOVERNANCE");
+        require(
+            block.chainid != HYPEREVM_MAINNET || governance.code.length > 0,
+            "GOVERNANCE has no code on mainnet: it must be a Safe, not a key"
+        );
+
         // Resolved from the chain rather than taken from the environment, because the
         // library resolves its own USDC address the same way. A mismatch between the two
         // would send deposits to a token the bridge path does not use, and it would look
@@ -78,6 +87,8 @@ contract DeployHyperliquid is Script {
         console2.log("HLMarketWhitelist", address(whitelist));
         console2.log("HLAgentVault impl", address(implementation));
         console2.log("HLAgentVaultFactory", address(factory));
+        console2.log("");
+        console2.log("Next: run script/hyperliquid/VerifyDeploy.s.sol against these addresses.");
         console2.log("");
         console2.log("NOT YET USABLE. Two governance actions remain, both from GOVERNANCE:");
         console2.log("  1. registry.setVaultFactory(%s)  -- one-shot", address(factory));
