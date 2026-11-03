@@ -324,8 +324,8 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
         if (!whitelist.isListed(asset)) revert Errors.VenueNotWhitelisted();
         if (openOrders >= Constants.MAX_OPEN_ORDERS) revert Errors.TooManyOpenOrders();
 
-        uint64 equity = _equity();
-        _requireWithinDrawdown(equity);
+        uint64 currentEquity = _equity();
+        _requireWithinDrawdown(currentEquity);
 
         uint64 maxCost = uint64((uint256(sz) * uint256(limitPx)) / SZ_PX_TO_USDC);
 
@@ -347,7 +347,7 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
             // The stricter of the vault's cap and the asset's own. A thin HIP-3 or HIP-4
             // book can be a worse constraint than the trader's risk appetite.
             uint16 cap = whitelist.effectiveCapBps(asset, positionCapBps);
-            _requireWithinPositionCap(_positionValue(), reservedAfter, equity, cap);
+            _requireWithinPositionCap(_positionValue(), reservedAfter, currentEquity, cap);
 
             reserved = reservedAfter;
         }
@@ -409,12 +409,12 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
     function reconcile(uint128[] calldata staleCloids) external nonReentrant {
         if (status == VaultStatus.None) revert Errors.VaultNotFound();
 
-        uint64 equity = _equity();
+        uint64 currentEquity = _equity();
 
         // The bridge has landed when Core's equity covers what we were waiting for. An
         // approximation, and deliberately a conservative one: it can only ever understate
         // what has arrived, never overstate it.
-        if (pendingBridge > 0 && equity > 0) {
+        if (pendingBridge > 0 && currentEquity > 0) {
             uint64 settled = pendingBridge;
             pendingBridge = 0;
             emit DepositSettled(settled);
@@ -429,10 +429,10 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
             _release(staleCloids[i], "expired");
         }
 
-        if (equity > highWaterMark) highWaterMark = equity;
+        if (currentEquity > highWaterMark) highWaterMark = currentEquity;
 
         uint256 dd = HighWaterMark.drawdownBps(
-            HighWaterMark.State({ balance: equity, highWaterMark: highWaterMark })
+            HighWaterMark.State({ balance: currentEquity, highWaterMark: highWaterMark })
         );
 
         if (dd >= maxDrawdownBps && status == VaultStatus.Active) {
@@ -442,7 +442,7 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
             _closeAllPositions();
         }
 
-        emit Reconciled(equity, highWaterMark, dd);
+        emit Reconciled(currentEquity, highWaterMark, dd);
     }
 
     /// Charge the execution fee on size that demonstrably changed.
@@ -566,8 +566,8 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
         // it. Unlike the Polygon vault this cannot strand anyone even in principle,
         // because `cancelAll` clears every reservation in one transaction and orders
         // expire within the hour regardless.
-        uint64 equity = _equity();
-        uint64 available = equity > reserved ? equity - reserved : 0;
+        uint64 currentEquity = _equity();
+        uint64 available = currentEquity > reserved ? currentEquity - reserved : 0;
         if (amount > available) revert Errors.InsufficientBalance();
 
         pendingWithdrawal += amount;
@@ -653,10 +653,10 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
         }
 
         IAgentRegistry.Listing memory l = registry.getListing(listingId);
-        uint64 equity = _equity();
+        uint64 currentEquity = _equity();
 
         HighWaterMark.State memory s =
-            HighWaterMark.State({ balance: equity, highWaterMark: highWaterMark });
+            HighWaterMark.State({ balance: currentEquity, highWaterMark: highWaterMark });
         HighWaterMark.FeeSplit memory split;
         (s, split) = s.assess(l.performanceFeeBps, l.builderSplitBps);
 
