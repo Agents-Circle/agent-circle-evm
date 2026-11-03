@@ -1,4 +1,4 @@
-.PHONY: install build test journey gas coverage params params-write fmt lint anvil deploy-local hl-deploy-local clean
+.PHONY: install build test invariant verify-deploy journey gas coverage params params-write fmt lint anvil deploy-local hl-deploy-local clean
 
 install:
 	forge install
@@ -8,6 +8,15 @@ build:
 
 test:
 	forge test
+
+# The invariant suites at CI depth (256 runs x 500 calls). `make test` runs them shallow.
+invariant:
+	FOUNDRY_PROFILE=ci forge test --match-path "test/**/*.invariant.t.sol"
+
+# Read a deployed HyperEVM stack back and check it. Sends nothing. Needs REGISTRY,
+# WHITELIST, FACTORY, GOVERNANCE, GUARDIAN, TREASURY, PLATFORM_BUILDER and RPC_URL.
+verify-deploy:
+	forge script script/hyperliquid/VerifyDeploy.s.sol --rpc-url $(RPC_URL)
 
 # The whole product as a printed walkthrough. Start here.
 journey:

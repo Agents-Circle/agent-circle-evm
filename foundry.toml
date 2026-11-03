@@ -11,9 +11,18 @@ evm_version = "paris"
 optimizer = true
 optimizer_runs = 200
 via_ir = false
+# VerifyDeploy reads the locked parameters back to compare them with the chain.
+fs_permissions = [{ access = "read", path = "./params" }]
+
+# Invariant suites are shallow locally so `forge test` stays quick, and deep in CI.
+[profile.default.invariant]
+runs = 32
+depth = 100
+fail_on_revert = false
 
 [profile.ci]
 fuzz = { runs = 5000 }
+invariant = { runs = 256, depth = 500, fail_on_revert = false }
 verbosity = 3
 
 [fmt]
