@@ -120,6 +120,24 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
     /// arrived before it has.
     uint64 public pendingBridge;
 
+    /// Core equity at the moment the pending bridge was asked for.
+    ///
+    /// The bridge has landed when equity reaches `bridgeBaseline + pendingBridge`, which
+    /// is the only form of that test that works on a vault which already had money.
+    /// "Equity is above zero" does not: a funded vault passes it before the deposit has
+    /// gone anywhere, marks the bridge settled, and then measures drawdown against a
+    /// high-water mark that already counts capital Core has never seen.
+    ///
+    /// Re-read on every deposit rather than accumulated. Two deposits before either
+    /// settles leave the baseline at the second one's reading, which can only make the
+    /// threshold too high and the settlement late — understating what has arrived, which
+    /// is the direction this is allowed to be wrong in.
+    uint64 public bridgeBaseline;
+
+    /// When the vault stops waiting for the pending bridge. Zero when nothing is in
+    /// flight.
+    uint64 public bridgeDeadline;
+
     /// Worst-case USDC committed to orders the vault believes are outstanding.
     uint64 public reserved;
     uint8 public openOrders;
@@ -173,6 +191,14 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
     /// Tif byte for an immediate-or-cancel order, per the CoreWriter action encoding
     /// (1 = Alo, 2 = Gtc, 3 = Ioc).
     uint8 private constant TIF_IOC = 3;
+
+    /// How long a deposit may stay in flight before the vault stops waiting for it.
+    ///
+    /// The bridge takes seconds. This is not a deadline for the money, it is a bound on
+    /// how long drawdown can go unmeasured — see `reconcile`. Generous enough that a
+    /// congested bridge does not trip it, short enough that the window is not a place to
+    /// hide.
+    uint64 private constant BRIDGE_GRACE = 15 minutes;
 
     constructor(
         address usdc_,
@@ -272,6 +298,13 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
 
         // Raise the mark with the deposit, or fresh capital reads as profit and the
         // trader is charged a performance fee on their own money.
+        //
+        // Which is also why the baseline is taken here, before the mark and the equity
+        // can drift apart: from this line until the bridge lands, `highWaterMark` counts
+        // capital that `_equity()` cannot see, and anything comparing the two without
+        // accounting for `pendingBridge` is reading a loss that has not happened.
+        bridgeBaseline = _equity();
+        bridgeDeadline = uint64(block.timestamp) + BRIDGE_GRACE;
         highWaterMark += amount;
         pendingBridge += amount;
 
@@ -411,13 +444,28 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
 
         uint64 currentEquity = _equity();
 
-        // The bridge has landed when Core's equity covers what we were waiting for. An
-        // approximation, and deliberately a conservative one: it can only ever understate
-        // what has arrived, never overstate it.
-        if (pendingBridge > 0 && currentEquity > 0) {
-            uint64 settled = pendingBridge;
-            pendingBridge = 0;
-            emit DepositSettled(settled);
+        // The bridge has landed when Core's equity covers the vault's equity before the
+        // deposit plus what was deposited.
+        //
+        // The old test — "equity is above zero" — is right only for a vault that had
+        // nothing. On a funded vault it passes before the deposit has gone anywhere, and
+        // settling early matters because the high-water mark was raised at `deposit` and
+        // `pendingBridge` is the only record that the two are temporarily out of step.
+        //
+        // The deadline is the other half. A vault that loses money while a deposit is in
+        // flight may never reach the threshold, and without a bound the bridge would stay
+        // "pending" forever — which, given what the next block does, would disable the
+        // drawdown limit permanently. After the grace period the vault stops waiting and
+        // measures what is actually there.
+        if (pendingBridge > 0) {
+            bool arrived = currentEquity >= bridgeBaseline + pendingBridge;
+            if (arrived || block.timestamp >= bridgeDeadline) {
+                uint64 settled = pendingBridge;
+                pendingBridge = 0;
+                bridgeBaseline = 0;
+                bridgeDeadline = 0;
+                emit DepositSettled(settled);
+            }
         }
 
         _accrueExecutionFees();
@@ -429,17 +477,33 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
             _release(staleCloids[i], "expired");
         }
 
-        if (currentEquity > highWaterMark) highWaterMark = currentEquity;
+        // Drawdown is not measurable while a deposit is in flight, and this is not a
+        // nicety. `deposit` raises the high-water mark by the full amount immediately —
+        // it has to, or fresh capital reads as profit — while the money reaches Core a
+        // block or two later. In that window a vault that has lost nothing reads as a
+        // total loss, and `reconcile` is permissionless: without this, anyone could pause
+        // a vault and fire reduce-only closes in the seconds after its trader funded it.
+        //
+        // Bounded by `BRIDGE_GRACE` above, so the window cannot be held open. Only the
+        // trader can open it at all, since `deposit` is `onlyTrader` — and a trader who
+        // wants their vault to stop trading has `pause`.
+        //
+        // Found by building the keeper, which would have been the caller.
+        uint256 dd;
 
-        uint256 dd = HighWaterMark.drawdownBps(
-            HighWaterMark.State({ balance: currentEquity, highWaterMark: highWaterMark })
-        );
+        if (pendingBridge == 0) {
+            if (currentEquity > highWaterMark) highWaterMark = currentEquity;
 
-        if (dd >= maxDrawdownBps && status == VaultStatus.Active) {
-            status = VaultStatus.Paused;
-            emit AutoPaused(dd);
-            emit StatusChanged(VaultStatus.Paused);
-            _closeAllPositions();
+            dd = HighWaterMark.drawdownBps(
+                HighWaterMark.State({ balance: currentEquity, highWaterMark: highWaterMark })
+            );
+
+            if (dd >= maxDrawdownBps && status == VaultStatus.Active) {
+                status = VaultStatus.Paused;
+                emit AutoPaused(dd);
+                emit StatusChanged(VaultStatus.Paused);
+                _closeAllPositions();
+            }
         }
 
         emit Reconciled(currentEquity, highWaterMark, dd);

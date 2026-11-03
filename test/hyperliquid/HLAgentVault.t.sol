@@ -169,9 +169,13 @@ contract HLAgentVaultTest is Test {
         v.deposit(uint64(whole * UNIT));
         vm.stopPrank();
 
-        // Core now reports the money. The bridge is asynchronous, so the vault only
-        // learns this at reconcile; the two-hop deposit has its own test below.
+        // Core now reports the money, and the vault learns it at reconcile. The fixture
+        // settles the bridge because that is the state almost every test means by "a
+        // funded vault" — and because an unsettled bridge deliberately suspends the
+        // drawdown check, so leaving it pending would quietly disarm the thing under
+        // test. The two-hop deposit has its own tests below.
         _setEquity(address(v), whole);
+        v.reconcile(new uint128[](0));
         return v;
     }
 
@@ -280,6 +284,91 @@ contract HLAgentVaultTest is Test {
 
         assertEq(v.pendingBridge(), 0, "settled");
         assertEq(v.equity(), 1_000 * UNIT);
+    }
+
+    /// `reconcile` is permissionless, so the window between a deposit and its arrival on
+    /// Core is a window anyone can call into. The mark has already risen; the money has
+    /// not arrived. Without the guard this pauses a vault whose trader has just funded it
+    /// and fires reduce-only closes against its positions.
+    function test_reconcileDuringTheBridgeWindowDoesNotPause() public {
+        vm.prank(otherTrader);
+        HLAgentVault v = HLAgentVault(factory.deployVault(listingId, 0, 0));
+
+        usdc.mint(otherTrader, 1_000 * UNIT);
+        vm.startPrank(otherTrader);
+        usdc.approve(address(v), type(uint256).max);
+        v.deposit(uint64(1_000 * UNIT));
+        vm.stopPrank();
+
+        // Equity zero against a mark of 1,000: a 100% drawdown on paper.
+        assertEq(v.equity(), 0);
+        assertEq(v.highWaterMark(), 1_000 * UNIT);
+
+        vm.prank(attacker);
+        v.reconcile(new uint128[](0));
+
+        assertEq(uint256(v.status()), uint256(HLAgentVault.VaultStatus.Active), "not paused");
+        assertEq(v.pendingBridge(), 1_000 * UNIT, "still in flight");
+    }
+
+    /// The same bug on a funded vault, which is the harder half: "equity is above zero"
+    /// is already true before the deposit goes anywhere, so the old settlement test
+    /// cleared `pendingBridge` and left the drawdown check measuring a mark that counted
+    /// money Core had never seen.
+    function test_topUpDoesNotTripTheDrawdownLimit() public {
+        // 10,000 in, settled by the fixture. 16% is the configured limit's neighbourhood.
+        assertEq(vault.pendingBridge(), 0);
+        assertEq(vault.highWaterMark(), 10_000 * UNIT);
+
+        usdc.mint(trader, 5_000 * UNIT);
+        vm.prank(trader);
+        vault.deposit(uint64(5_000 * UNIT));
+
+        // Mark at 15,000, Core still showing 10,000: a 33% drawdown on paper.
+        assertEq(vault.highWaterMark(), 15_000 * UNIT);
+        assertEq(vault.equity(), 10_000 * UNIT);
+
+        vault.reconcile(new uint128[](0));
+
+        assertEq(uint256(vault.status()), uint256(HLAgentVault.VaultStatus.Active), "not paused");
+        assertEq(vault.pendingBridge(), 5_000 * UNIT, "not settled early");
+
+        // And once the money is really there, it settles and the mark is honest.
+        _setEquity(address(vault), 15_000);
+        vault.reconcile(new uint128[](0));
+
+        assertEq(vault.pendingBridge(), 0, "settled");
+        assertEq(vault.highWaterMark(), 15_000 * UNIT);
+    }
+
+    /// The window has to be bounded. A vault that loses money while a deposit is in
+    /// flight may never reach the settlement threshold, and an unbounded "pending" would
+    /// suspend the drawdown limit for the rest of the vault's life.
+    function test_theBridgeWindowCannotHoldTheDrawdownLimitOpen() public {
+        _setPosition(address(vault), BTC_PERP, _sziWorth(100));
+        vm.prank(agent);
+        vault.placeOrder(BTC_PERP, true, 1e8, _size(100), false, 2, 1);
+
+        usdc.mint(trader, 5_000 * UNIT);
+        vm.prank(trader);
+        vault.deposit(uint64(5_000 * UNIT));
+
+        // The deposit lands and then the agent loses a third of the vault. Equity never
+        // reaches baseline + deposit, so the threshold alone would wait forever.
+        _setEquity(address(vault), 10_000);
+        vault.reconcile(new uint128[](0));
+        assertEq(uint256(vault.status()), uint256(HLAgentVault.VaultStatus.Active));
+        assertEq(vault.pendingBridge(), 5_000 * UNIT, "still waiting");
+
+        vm.warp(block.timestamp + 15 minutes);
+        vault.reconcile(new uint128[](0));
+
+        assertEq(vault.pendingBridge(), 0, "stopped waiting");
+        assertEq(
+            uint256(vault.status()),
+            uint256(HLAgentVault.VaultStatus.Paused),
+            "the limit applies again"
+        );
     }
 
     /// Bridged USDC lands in spot, so the class transfer to perp is not optional: without
