@@ -1,4 +1,4 @@
-.PHONY: install build test journey gas coverage params params-write fmt lint anvil deploy-local clean
+.PHONY: install build test journey gas coverage params params-write fmt lint anvil deploy-local hl-deploy-local clean
 
 install:
 	forge install
@@ -38,12 +38,23 @@ fmt:
 lint:
 	forge fmt --check && forge build
 
+# --chain-id 999 because HLConstants resolves USDC and the Core deposit wallet from
+# block.chainid. On anvil's default 31337 both point at nothing and the deposit path
+# reverts somewhere that looks unrelated.
 anvil:
-	anvil --port 8546
+	anvil --port 8546 --chain-id 999
 
 # Requires `make anvil` in another terminal.
 deploy-local:
 	forge script script/DeployLocal.s.sol:DeployLocal \
+		--rpc-url http://127.0.0.1:8546 --broadcast
+
+# The HyperEVM journey against a live local node. Installs the HyperCore mocks first,
+# because the precompiles and the CoreWriter are chain features rather than contracts the
+# script can deploy. Requires `make anvil` in another terminal.
+hl-deploy-local:
+	./script/hyperliquid/install-local-core.sh
+	forge script script/hyperliquid/DeployLocal.s.sol:DeployLocalHyperliquid \
 		--rpc-url http://127.0.0.1:8546 --broadcast
 
 deploy-amoy:
