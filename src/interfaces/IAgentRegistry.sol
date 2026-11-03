@@ -19,8 +19,31 @@ interface IAgentRegistry {
         uint16 builderSplitBps;
         uint16 positionCapBps;
         uint16 maxDrawdownBps;
+        // Placed here rather than appended so the fee fields stay together, and because
+        // slot 1 had three spare bytes after `maxDrawdownBps`. The pair costs four, so
+        // one lands in slot 1 and one joins `submittedAt` in slot 2 — four slots before,
+        // four slots after.
+        uint16 executionFeeBps;
+        uint16 executionBuilderSplitBps;
         uint64 submittedAt;
         bytes32 metadataHash;
+    }
+
+    /// Everything governance sets on a listing at approval time.
+    ///
+    /// A struct rather than six positional `uint16`s, and not for tidiness: the six are
+    /// mutually transposable at the call site, and transposing `builderSplitBps` with
+    /// `positionCapBps` would be accepted by every bound in `_approveListing` while
+    /// silently mispricing the listing. A multisig signer reading a decoded simulation
+    /// should not have to count arguments. This also mirrors the Anchor side's
+    /// `FeeConfig`, which the error names in `Errors.sol` are already kept parallel to.
+    struct Terms {
+        uint16 performanceFeeBps;
+        uint16 builderSplitBps;
+        uint16 executionFeeBps;
+        uint16 executionBuilderSplitBps;
+        uint16 positionCapBps;
+        uint16 maxDrawdownBps;
     }
 
     struct Builder {

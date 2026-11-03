@@ -28,11 +28,20 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
     address public governance;
     address public guardian;
     address public vault;
+    /// Clone factory whose children may move AUM figures. See `setVaultFactory`.
+    address public vaultFactory;
 
     /// Bond required for each tier, ascending.
     uint256[3] public tierBonds;
     /// AUM ceiling unlocked by each tier, ascending.
     uint256[3] public tierCeilings;
+
+    /// How much of a tier's USDC bond staked $AGENT may substitute for. Zero, and it
+    /// stays zero: $AGENT does not exist. The hook is here so the shape is settled and
+    /// tested before there is any pressure to ship it in a hurry.
+    ///
+    /// Read the warning on `setAgentBondDiscount` before enabling it.
+    uint16 public agentBondDiscountBps;
 
     mapping(address => Builder) internal _builders;
     mapping(bytes32 => Listing) internal _listings;
@@ -48,7 +57,9 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
     event ListingSuspended(bytes32 indexed listingId, address indexed by);
     event AgentAuthorityChanged(bytes32 indexed listingId, address indexed next);
     event VaultSet(address indexed vault);
+    event VaultFactorySet(address indexed factory);
     event GuardianChanged(address indexed previous, address indexed next);
+    event AgentBondDiscountSet(uint16 discountBps);
 
     modifier onlyGovernance() {
         if (msg.sender != governance) revert Errors.NotGovernance();
@@ -194,6 +205,8 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
             status: ListingStatus.Vetting,
             performanceFeeBps: 0,
             builderSplitBps: 0,
+            executionFeeBps: 0,
+            executionBuilderSplitBps: 0,
             positionCapBps: 0,
             maxDrawdownBps: 0,
             submittedAt: uint64(block.timestamp),
@@ -203,49 +216,56 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
         emit ListingSubmitted(id, msg.sender, metadataHash);
     }
 
-    function approveListing(
-        bytes32 id,
-        uint16 performanceFeeBps,
-        uint16 builderSplitBps,
-        uint16 positionCapBps,
-        uint16 maxDrawdownBps
-    ) external onlyGovernance {
-        _approveListing(id, performanceFeeBps, builderSplitBps, positionCapBps, maxDrawdownBps);
+    function approveListing(bytes32 id, Terms calldata terms) external onlyGovernance {
+        _approveListing(id, terms);
     }
 
     /// Approve with the locked launch parameters. The common path.
     function approveListingAtLaunchTerms(bytes32 id) external onlyGovernance {
         _approveListing(
             id,
-            Constants.DEFAULT_PERFORMANCE_FEE_BPS,
-            Constants.DEFAULT_BUILDER_SPLIT_BPS,
-            Constants.DEFAULT_POSITION_CAP_BPS,
-            Constants.DEFAULT_MAX_DRAWDOWN_BPS
+            Terms({
+                performanceFeeBps: Constants.DEFAULT_PERFORMANCE_FEE_BPS,
+                builderSplitBps: Constants.DEFAULT_BUILDER_SPLIT_BPS,
+                executionFeeBps: Constants.DEFAULT_EXECUTION_FEE_BPS,
+                executionBuilderSplitBps: Constants.DEFAULT_EXECUTION_BUILDER_SPLIT_BPS,
+                positionCapBps: Constants.DEFAULT_POSITION_CAP_BPS,
+                maxDrawdownBps: Constants.DEFAULT_MAX_DRAWDOWN_BPS
+            })
         );
     }
 
-    function _approveListing(
-        bytes32 id,
-        uint16 performanceFeeBps,
-        uint16 builderSplitBps,
-        uint16 positionCapBps,
-        uint16 maxDrawdownBps
-    ) internal {
+    function _approveListing(bytes32 id, Terms memory t) internal {
         Listing storage l = _listings[id];
         if (l.status != ListingStatus.Vetting) revert Errors.ListingNotVetting();
 
+        // Every bound here is one a fully compromised multisig still cannot cross. The
+        // execution-fee pair is bounded in both directions for the same reason the
+        // performance split is: a ceiling stops the fee being used to drain a vault
+        // through churn, and a floor under the builder's share stops governance quietly
+        // reassigning the builder's half to the platform.
+        //
+        // Zero is permitted for the execution fee — unlike the position cap, where zero
+        // would mean a vault that cannot trade at all. A listing on zero execution fee is
+        // a coherent thing to approve, and may well be the right call for a low-turnover
+        // agent.
         if (
-            performanceFeeBps > Constants.MAX_PERFORMANCE_FEE_BPS
-                || builderSplitBps < Constants.MIN_BUILDER_SPLIT_BPS
-                || builderSplitBps > Constants.BPS || positionCapBps == 0
-                || positionCapBps > Constants.MAX_POSITION_CAP_BPS || maxDrawdownBps == 0
-                || maxDrawdownBps > Constants.MAX_DRAWDOWN_BPS_CEILING
+            t.performanceFeeBps > Constants.MAX_PERFORMANCE_FEE_BPS
+                || t.builderSplitBps < Constants.MIN_BUILDER_SPLIT_BPS
+                || t.builderSplitBps > Constants.BPS
+                || t.executionFeeBps > Constants.MAX_EXECUTION_FEE_BPS
+                || t.executionBuilderSplitBps < Constants.MIN_EXECUTION_BUILDER_SPLIT_BPS
+                || t.executionBuilderSplitBps > Constants.BPS || t.positionCapBps == 0
+                || t.positionCapBps > Constants.MAX_POSITION_CAP_BPS || t.maxDrawdownBps == 0
+                || t.maxDrawdownBps > Constants.MAX_DRAWDOWN_BPS_CEILING
         ) revert Errors.ParameterOutOfBounds();
 
-        l.performanceFeeBps = performanceFeeBps;
-        l.builderSplitBps = builderSplitBps;
-        l.positionCapBps = positionCapBps;
-        l.maxDrawdownBps = maxDrawdownBps;
+        l.performanceFeeBps = t.performanceFeeBps;
+        l.builderSplitBps = t.builderSplitBps;
+        l.executionFeeBps = t.executionFeeBps;
+        l.executionBuilderSplitBps = t.executionBuilderSplitBps;
+        l.positionCapBps = t.positionCapBps;
+        l.maxDrawdownBps = t.maxDrawdownBps;
         l.status = ListingStatus.Live;
 
         emit ListingApproved(id);
@@ -279,7 +299,7 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
     // ────────────────────────────────────────────────────────── AUM
 
     function notifyAumDelta(bytes32 id, int256 delta) external {
-        if (msg.sender != vault) revert Errors.NotVault();
+        if (!_isAuthorisedVault(msg.sender)) revert Errors.NotVault();
         Listing storage l = _listings[id];
         if (l.status == ListingStatus.None) revert Errors.ListingNotFound();
 
@@ -315,10 +335,69 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
         emit VaultSet(vault_);
     }
 
+    /// Register the clone factory whose children may move AUM figures.
+    ///
+    /// One-shot for the same reason `setVault` is, and the reason is sharper here. With a
+    /// singleton, a re-settable pointer would let a compromised key authorise one rogue
+    /// contract. With a factory it would authorise an unbounded *set* of them, since the
+    /// attacker's factory attests whatever it likes. This is the new trust edge ADR-0001
+    /// names, and making it unchangeable is most of what makes it safe.
+    ///
+    /// Both paths coexist: Polygon runs a singleton vault, HyperEVM runs clones, and one
+    /// registry deployment serves one chain. Leaving `vault` unset on HyperEVM and
+    /// `vaultFactory` unset on Polygon is the expected configuration, not an oversight.
+    function setVaultFactory(address factory_) external onlyGovernance {
+        if (vaultFactory != address(0)) revert Errors.AlreadySet();
+        if (factory_ == address(0)) revert Errors.ZeroAddress();
+        vaultFactory = factory_;
+        emit VaultFactorySet(factory_);
+    }
+
+    /// Whether `caller` may move AUM figures.
+    ///
+    /// The factory is asked rather than trusted to have told us: `isVault` reads a
+    /// mapping only the factory's own deploy path writes, so a contract cannot vouch for
+    /// itself. A `staticcall` with a decoded bool, rather than a plain interface call, so
+    /// that a factory address pointing at something which is not a factory fails closed
+    /// instead of reverting the trader's deposit.
+    function _isAuthorisedVault(address caller) internal view returns (bool) {
+        if (caller == vault && vault != address(0)) return true;
+        if (vaultFactory == address(0)) return false;
+
+        (bool ok, bytes memory ret) =
+            vaultFactory.staticcall(abi.encodeWithSignature("isVault(address)", caller));
+        return ok && ret.length == 32 && abi.decode(ret, (bool));
+    }
+
     function setGuardian(address next) external onlyGovernance {
         if (next == address(0)) revert Errors.ZeroAddress();
         emit GuardianChanged(guardian, next);
         guardian = next;
+    }
+
+    /// Let staked $AGENT substitute for part of a tier's USDC bond. Disabled at zero.
+    ///
+    /// **This weakens every bond already posted, immediately and retroactively.** A
+    /// builder at tier 2 on exactly the tier-2 bond stays at tier 2 and may now withdraw
+    /// the difference, so turning this on hands back collateral that is currently
+    /// backing live trader capital. That is not a side effect to be managed; it is what
+    /// the function does.
+    ///
+    /// It is deliberately left untimelocked and bounded instead, because a timelock here
+    /// would be security theatre: the bound is what makes a compromised multisig unable
+    /// to zero the bonds, and a two-day delay on a change that only ever reduces
+    /// collateral protects nobody who was not already watching. The real control is that
+    /// `MAX_AGENT_BOND_DISCOUNT_BPS` caps it at half, whatever governance intends.
+    ///
+    /// Before enabling it, the AUM coverage check in `withdrawBond` should be the thing
+    /// that holds — and it is: a builder still cannot withdraw below the tier covering
+    /// their live AUM. The discount lowers what that tier costs, not what it covers.
+    function setAgentBondDiscount(uint16 discountBps) external onlyGovernance {
+        if (discountBps > Constants.MAX_AGENT_BOND_DISCOUNT_BPS) {
+            revert Errors.ParameterOutOfBounds();
+        }
+        agentBondDiscountBps = discountBps;
+        emit AgentBondDiscountSet(discountBps);
     }
 
     // ────────────────────────────────────────────────────────── views
@@ -339,8 +418,21 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
     /// capital at all.
     function _tierFor(uint256 bond) internal view returns (uint8 tier) {
         for (uint256 i; i < 3; ++i) {
-            if (bond >= tierBonds[i]) tier = uint8(i + 1);
+            if (bond >= requiredBond(i + 1)) tier = uint8(i + 1);
         }
+    }
+
+    /// USDC a builder must post to reach `tier`, after any $AGENT discount.
+    ///
+    /// Identical to `tierBonds[tier - 1]` while the discount is off, which is its
+    /// permanent state until $AGENT exists. Routed through a function rather than read
+    /// directly so that turning the discount on later changes one place instead of
+    /// every tier comparison, and so the disabled path is the one under test today.
+    function requiredBond(uint256 tier) public view returns (uint256) {
+        if (tier == 0 || tier > 3) return 0;
+        uint256 full = tierBonds[tier - 1];
+        if (agentBondDiscountBps == 0) return full;
+        return full - (full * agentBondDiscountBps) / Constants.BPS;
     }
 
     function _ceilingFor(uint8 tier) internal view returns (uint256) {

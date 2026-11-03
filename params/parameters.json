@@ -1,0 +1,197 @@
+{
+  "$comment": [
+    "Single source of truth for Agent Circle's locked launch parameters.",
+    "",
+    "Every number here must appear identically in the Solidity constants, the Anchor",
+    "constants, and the public docs. `script/check-params.py` enforces that in CI and",
+    "fails the build on drift. Changing a value here without changing it everywhere",
+    "else is a red build, which is the point: the three implementations have drifted",
+    "before, and a compromised or careless governance key is not the only way a",
+    "guardrail gets lost.",
+    "",
+    "`value` is the launch default. `guardrail` is the bound governance itself cannot",
+    "exceed, with `guardrail_kind` saying which direction it binds in."
+  ],
+  "bps_denominator": 10000,
+  "economics": {
+    "listing_fee_bps": {
+      "value": 0,
+      "guardrail": 500,
+      "guardrail_kind": "max",
+      "solidity": [
+        "DEFAULT_LISTING_FEE_BPS",
+        "MAX_LISTING_FEE_BPS"
+      ],
+      "rust": [
+        "DEFAULT_LISTING_FEE_BPS",
+        "MAX_LISTING_FEE_BPS"
+      ],
+      "note": "Field exists and is configurable; zero at launch."
+    },
+    "performance_fee_bps": {
+      "value": 1000,
+      "guardrail": 2000,
+      "guardrail_kind": "max",
+      "solidity": [
+        "DEFAULT_PERFORMANCE_FEE_BPS",
+        "MAX_PERFORMANCE_FEE_BPS"
+      ],
+      "rust": [
+        "DEFAULT_PERFORMANCE_FEE_BPS",
+        "MAX_PERFORMANCE_FEE_BPS"
+      ],
+      "note": "Of profit above the high-water mark only. Never on principal."
+    },
+    "builder_split_bps": {
+      "value": 8000,
+      "guardrail": 5000,
+      "guardrail_kind": "min",
+      "solidity": [
+        "DEFAULT_BUILDER_SPLIT_BPS",
+        "MIN_BUILDER_SPLIT_BPS"
+      ],
+      "rust": [
+        "DEFAULT_BUILDER_SPLIT_BPS",
+        "MIN_BUILDER_SPLIT_BPS"
+      ],
+      "note": "Builder share of the performance fee. 80 builder / 20 platform."
+    },
+    "execution_fee_bps": {
+      "value": 2,
+      "guardrail": 10,
+      "guardrail_kind": "max",
+      "solidity": [
+        "DEFAULT_EXECUTION_FEE_BPS",
+        "MAX_EXECUTION_FEE_BPS"
+      ],
+      "rust": [
+        "DEFAULT_EXECUTION_FEE_BPS",
+        "MAX_EXECUTION_FEE_BPS"
+      ],
+      "note": "Per-trade, on notional, charged from observed fills at reconcile. Not a management fee: it is never levied on idle capital. See ADR-0002."
+    },
+    "execution_builder_split_bps": {
+      "value": 5000,
+      "guardrail": 5000,
+      "guardrail_kind": "min",
+      "solidity": [
+        "DEFAULT_EXECUTION_BUILDER_SPLIT_BPS",
+        "MIN_EXECUTION_BUILDER_SPLIT_BPS"
+      ],
+      "rust": [
+        "DEFAULT_EXECUTION_BUILDER_SPLIT_BPS",
+        "MIN_EXECUTION_BUILDER_SPLIT_BPS"
+      ],
+      "note": "Builder share of the execution fee. 50/50 at launch, and the guardrail equals the default, so governance cannot cut the builder below half."
+    }
+  },
+  "risk": {
+    "position_cap_bps": {
+      "value": 1200,
+      "guardrail": 2500,
+      "guardrail_kind": "max",
+      "solidity": [
+        "DEFAULT_POSITION_CAP_BPS",
+        "MAX_POSITION_CAP_BPS"
+      ],
+      "rust": [
+        "DEFAULT_POSITION_CAP_BPS",
+        "MAX_POSITION_CAP_BPS"
+      ],
+      "note": "Per position, against total vault value. Traders may override stricter only."
+    },
+    "max_drawdown_bps": {
+      "value": 1500,
+      "guardrail": 5000,
+      "guardrail_kind": "max",
+      "solidity": [
+        "DEFAULT_MAX_DRAWDOWN_BPS",
+        "MAX_DRAWDOWN_BPS_CEILING"
+      ],
+      "rust": [
+        "DEFAULT_MAX_DRAWDOWN_BPS",
+        "MAX_DRAWDOWN_BPS_CEILING"
+      ],
+      "note": "From the high-water mark. Traders may override stricter only."
+    }
+  },
+  "bonding": {
+    "bond_token": "USDC",
+    "bond_token_decimals": 6,
+    "tier_bonds": [
+      2500,
+      10000,
+      40000
+    ],
+    "tier_ceilings": [
+      25000,
+      150000,
+      1000000
+    ],
+    "note": "Whole USDC. Ceilings are per *builder* across all their listings, not per listing. Tier 0 is unbonded and may hold no capital.",
+    "agent_bond_discount": {
+      "enabled": false,
+      "max_discount_bps": 5000,
+      "note": "Staked $AGENT may later discount the USDC bond by up to 50%. $AGENT does not exist; the hook ships disabled.",
+      "solidity": [
+        "MAX_AGENT_BOND_DISCOUNT_BPS"
+      ]
+    }
+  },
+  "timing": {
+    "unbond_period_days": {
+      "value": 14,
+      "guardrail": 90,
+      "guardrail_kind": "max",
+      "solidity": [
+        "DEFAULT_UNBOND_PERIOD",
+        "MAX_UNBOND_PERIOD"
+      ],
+      "rust": [
+        "DEFAULT_UNBOND_PERIOD",
+        "MAX_UNBOND_PERIOD"
+      ],
+      "note": "Bond stays fully slashable throughout."
+    },
+    "fee_assessment_interval_days": 7,
+    "venue_timelock_hours": {
+      "evm": 48,
+      "solana": 72,
+      "note": "Deliberately different. The EVM whitelist timelocks venue additions at 2 days; Solana governance timelocks config changes at 72 hours. Removals are instant on both and guardian-callable."
+    },
+    "max_order_lifetime_hours": 1,
+    "max_open_orders": 8
+  },
+  "slashing": {
+    "trader_share_bps": 7000,
+    "buyback_share_bps": 3000,
+    "solidity": [
+      "SLASH_TRADER_BPS"
+    ],
+    "rust": [
+      "SLASH_TRADER_BPS"
+    ],
+    "note": "Never 100% to treasury \u2014 that would create an incentive to slash."
+  },
+  "parity_exceptions": [
+    {
+      "item": "listing status enum",
+      "solidity": [
+        "None",
+        "Vetting",
+        "Live",
+        "Rejected",
+        "Suspended",
+        "Delisted"
+      ],
+      "rust": [
+        "Vetting",
+        "Live",
+        "Paused",
+        "Delisted"
+      ],
+      "reason": "Known divergence. Aligning it is a breaking IDL change, scheduled for Phase 6 when the Solana agent-vault lands and the IDL has to change anyway. Documented rather than silently tolerated.",
+      "decided": "2026-11-02"
+    }
+  ]
+}

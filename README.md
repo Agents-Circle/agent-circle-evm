@@ -28,14 +28,38 @@ the fastest way to see what this does.
 
 | | |
 |---|---|
-| Tests | 86 passing |
-| Line coverage | 96% (`HighWaterMark` and `VenueWhitelist` at 100%) |
+| Tests | 134 passing |
+| Line coverage | 98.9% (`VenueWhitelist` at 100%) |
+| Branch coverage | 85.8% (`AgentRegistry` and `VenueWhitelist` at 100%) |
+| Function coverage | 100% |
 | Local deployment | Verified — contracts deployed and the full journey driven against a live node |
 | Testnet | Not yet deployed to Amoy |
 | Audit | Not started |
 
-Branch coverage is 51%, and that number is honest: most unexercised branches are revert
-paths on parameter validation. Worth closing before an audit, not before a conversation.
+Branch coverage was 51% and is now 85.8%. The gap closed was almost entirely revert
+paths: a guard whose refusal is never exercised is a guard nobody has proved refuses for
+the reason its name claims, and one that silently stopped guarding would have left every
+test still passing. `AgentVault` is the remaining 75%, and what is left there is mostly
+the unreachable arms of compound conditionals.
+
+Two honest footnotes, because the alternative is numbers that flatter:
+
+**`HighWaterMark` reports 90.48% lines and will not report more.** The two uncovered
+lines are the bare `return s;` at the end of `onDeposit` and `onWithdraw`. The statements
+above them run 315 and 266 times respectively; returning an already-mutated memory struct
+compiles to no distinct instruction, so the line gets no coverage attributed to it and no
+test can change that. Branch and function coverage on the library are both 100%. The
+fix would be to write the functions with named returns, which is a change to the most
+correctness-critical file in the repository made to satisfy a reporting artifact — worth
+doing deliberately, not quietly.
+
+**`AgentVault.resumeVault` contains a branch that cannot be reached.** Its
+`VaultNotFound` check sits behind `onlyTrader`, and an unknown vault has
+`trader == address(0)`, so the modifier always rejects first and a caller sees
+`NotTrader`. The behaviour is right — an unknown vault is refused — but the error is the
+modifier's and the check inside the function is dead. Left in place, with a test pinning
+the actual revert, rather than removed: it is custody code and the removal deserves its
+own review.
 
 ---
 
@@ -43,17 +67,25 @@ paths on parameter validation. Worth closing before an audit, not before a conve
 
 **`AgentRegistry`** — builder identity, agent listings, staked bonds.
 
-A builder posts a bond and the bond buys a tier. The tier caps how much trader capital
-that builder may have under management across *all* their listings at once. Per-builder
-rather than per-listing on purpose: a builder able to defraud across three agents is
-exposed for the total, not for each one separately.
+A builder posts a bond in **USDC** and the bond buys a tier. The tier caps how much
+trader capital that builder may have under management across *all* their listings at
+once. Per-builder rather than per-listing on purpose: a builder able to defraud across
+three agents is exposed for the total, not for each one separately.
 
-| Tier | Bond | AUM ceiling |
+| Tier | Bond (USDC) | AUM ceiling |
 |---|---|---|
 | 0 | — | none; cannot take capital |
-| 1 | 25,000 | 25,000 |
-| 2 | 100,000 | 150,000 |
-| 3 | 400,000 | 1,000,000 |
+| 1 | 2,500 | 25,000 |
+| 2 | 10,000 | 150,000 |
+| 3 | 40,000 | 1,000,000 |
+
+Roughly 10% of the ceiling each tier unlocks. Below that the bond is theatre: a builder
+who can defraud $25,000 for a $2,500 stake will. USDC rather than a token the platform
+issues, because a bond denominated in $AGENT is a bond whose value the platform controls,
+and whose value collapses in exactly the scenario where traders need to be made whole.
+`setAgentBondDiscount` can later let staked $AGENT substitute for up to half of it — the
+hook ships disabled and capped, and the comment on it is worth reading before anyone
+enables it.
 
 Listings carry zero economics until governance approves them, so a listing that never
 passes vetting can never earn.
@@ -101,6 +133,7 @@ over a plain struct so every rule is unit-testable in isolation.
 | Listing fee | 0 |
 | Performance fee | 10% of profit above the high-water mark |
 | Builder / platform split | 80 / 20 |
+| Execution fee | 2 bps of notional traded, split 50 / 50 |
 | Default position cap | 12% of vault value |
 | Default max drawdown | 15% from the mark |
 | Unbonding period | 14 days |
@@ -108,6 +141,20 @@ over a plain struct so every rule is unit-testable in isolation.
 
 Governance can tune these per listing but cannot exceed the guardrails in
 `Constants.sol` — a fully compromised multisig still cannot set a 100% performance fee.
+
+The execution fee is charged on notional that actually traded, never on capital under
+management, so there is still no management fee and there is not going to be one: an idle
+vault pays nothing however long it sits. It does create an incentive the performance fee
+does not, because a builder earns on turnover whether or not the turnover made money. The
+guardrail caps it at 10 bps, and the real checks on it are outside these contracts —
+agents ranked on net-of-fee returns, turnover shown on every listing, and an automatic
+flag when a listing's fees exceed its gross profit over thirty days.
+
+These numbers live in `params/parameters.json`, and `script/check-params.py` fails CI if
+they drift from here, from the Anchor constants, or from the docs. That check exists
+because they had already drifted: the Anchor side bounded the position cap and drawdown
+limit only against 10,000 bps, so it would have approved a listing this implementation
+rejects.
 
 ---
 
