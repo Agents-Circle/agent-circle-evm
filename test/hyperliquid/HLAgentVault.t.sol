@@ -824,4 +824,309 @@ contract HLAgentVaultTest is Test {
             "accepted orders can never add up past the cap"
         );
     }
+
+    // ─────────────────────────────────────── guard paths
+    //
+    // The reverts and the early returns. Custody code earns the right to be trusted by
+    // having its refusals tested, not only its happy paths: a guard that stopped
+    // guarding would leave every test above still green.
+
+    function test_constructorRejectsZeroAddresses() public {
+        vm.expectRevert(Errors.ZeroAddress.selector);
+        new HLAgentVault(
+            address(0), address(registry), address(whitelist), treasury, builderFeeAccount, 0
+        );
+
+        vm.expectRevert(Errors.ZeroAddress.selector);
+        new HLAgentVault(
+            address(usdc), address(0), address(whitelist), treasury, builderFeeAccount, 0
+        );
+
+        vm.expectRevert(Errors.ZeroAddress.selector);
+        new HLAgentVault(
+            address(usdc), address(registry), address(0), treasury, builderFeeAccount, 0
+        );
+
+        vm.expectRevert(Errors.ZeroAddress.selector);
+        new HLAgentVault(
+            address(usdc), address(registry), address(whitelist), address(0), builderFeeAccount, 0
+        );
+
+        vm.expectRevert(Errors.ZeroAddress.selector);
+        new HLAgentVault(
+            address(usdc), address(registry), address(whitelist), treasury, address(0), 0
+        );
+    }
+
+    function test_factoryRejectsAZeroImplementation() public {
+        vm.expectRevert(Errors.ZeroAddress.selector);
+        new HLAgentVaultFactory(address(0));
+    }
+
+    function test_depositGuards() public {
+        vm.startPrank(trader);
+        vm.expectRevert(Errors.ZeroAmount.selector);
+        vault.deposit(0);
+
+        vault.pause();
+        vm.expectRevert(Errors.VaultNotActive.selector);
+        vault.deposit(uint64(1 * UNIT));
+        vm.stopPrank();
+    }
+
+    /// The tier ceiling is the registry's, and the vault must respect it on the way in.
+    function test_depositRefusedPastTheAumCeiling() public {
+        vm.startPrank(trader);
+        vault.resume();
+        usdc.mint(trader, 30_000 * UNIT);
+        // Tier 1 ceiling is 25,000 and 10,000 is already in.
+        vm.expectRevert(Errors.AumCeilingExceeded.selector);
+        vault.deposit(uint64(20_000 * UNIT));
+        vm.stopPrank();
+    }
+
+    function test_onlyTraderCanDepositOrWithdraw() public {
+        vm.startPrank(attacker);
+        vm.expectRevert(Errors.NotTrader.selector);
+        vault.deposit(uint64(1 * UNIT));
+
+        vm.expectRevert(Errors.NotTrader.selector);
+        vault.requestWithdraw(uint64(1 * UNIT));
+
+        vm.expectRevert(Errors.NotTrader.selector);
+        vault.pause();
+
+        vm.expectRevert(Errors.NotTrader.selector);
+        vault.tightenRiskLimits(100, 100);
+        vm.stopPrank();
+    }
+
+    function test_orderRejectsZeroSizePriceAndCloid() public {
+        vm.startPrank(agent);
+        vm.expectRevert(Errors.ZeroAmount.selector);
+        vault.placeOrder(BTC_PERP, true, 1e8, 0, false, 2, 1);
+
+        vm.expectRevert(Errors.ZeroAmount.selector);
+        vault.placeOrder(BTC_PERP, true, 0, _size(1), false, 2, 1);
+
+        // A zero cloid cannot be cancelled by cloid, so it cannot be accepted.
+        vm.expectRevert(Errors.ZeroAmount.selector);
+        vault.placeOrder(BTC_PERP, true, 1e8, _size(1), false, 2, 0);
+        vm.stopPrank();
+    }
+
+    /// An order so small it rounds to no notional is refused rather than reserved at
+    /// zero: a reservation of zero is an order the cap cannot see.
+    function test_orderRoundingToZeroNotionalIsRefused() public {
+        vm.prank(agent);
+        vm.expectRevert(Errors.ZeroAmount.selector);
+        vault.placeOrder(BTC_PERP, true, 1, 1, false, 2, 1);
+    }
+
+    function test_cancelGuards() public {
+        vm.prank(trader);
+        vm.expectRevert(Errors.OrderNotFound.selector);
+        vault.cancelOrder(42);
+
+        vm.prank(agent);
+        vault.placeOrder(BTC_PERP, true, 1e8, _size(1), false, 2, 1);
+
+        vm.prank(trader);
+        vault.cancelOrder(1);
+
+        // Cancelling twice is refused rather than double-releasing the reservation.
+        vm.prank(trader);
+        vm.expectRevert(Errors.OrderNotFound.selector);
+        vault.cancelOrder(1);
+    }
+
+    function test_onlyTraderOrAgentCanCancel() public {
+        vm.prank(agent);
+        vault.placeOrder(BTC_PERP, true, 1e8, _size(1), false, 2, 1);
+
+        vm.prank(attacker);
+        vm.expectRevert(Errors.NotTraderOrAgent.selector);
+        vault.cancelOrder(1);
+    }
+
+    /// `cancelAll` skips what it cannot cancel instead of reverting the batch.
+    ///
+    /// Deliberate: this is the trader's route back to their own money, and one stale
+    /// cloid in the list must not be able to block the other seven.
+    function test_cancelAllSkipsUnknownAndAlreadyReleasedOrders() public {
+        vm.prank(agent);
+        vault.placeOrder(BTC_PERP, true, 1e8, _size(1), false, 2, 1);
+
+        uint128[] memory cloids = new uint128[](3);
+        cloids[0] = 999; // never existed
+        cloids[1] = 1; // real
+        cloids[2] = 1; // already released by the time it is reached
+
+        vm.prank(trader);
+        vault.cancelAll(cloids);
+
+        assertEq(vault.reserved(), 0);
+        assertEq(vault.openOrders(), 0);
+    }
+
+    function test_resumeAndPauseRoundTrip() public {
+        vm.startPrank(trader);
+        vault.pause();
+        assertEq(uint256(vault.status()), uint256(HLAgentVault.VaultStatus.Paused));
+        vault.resume();
+        assertEq(uint256(vault.status()), uint256(HLAgentVault.VaultStatus.Active));
+        vm.stopPrank();
+    }
+
+    // ─────────────────────────────────────── withdrawal edges
+
+    function test_requestWithdrawRejectsZeroAndOverdraw() public {
+        vm.startPrank(trader);
+        vm.expectRevert(Errors.ZeroAmount.selector);
+        vault.requestWithdraw(0);
+
+        vm.expectRevert(Errors.InsufficientBalance.selector);
+        vault.requestWithdraw(uint64(10_001 * UNIT));
+        vm.stopPrank();
+    }
+
+    function test_finalizeWithNothingToPayReverts() public {
+        vm.expectRevert(Errors.InsufficientBalance.selector);
+        vault.finalizeWithdraw();
+    }
+
+    /// USDC has arrived but nothing was requested. Paying it out would hand the trader
+    /// money the protocol has no record of owing, so it refuses rather than guesses.
+    function test_finalizeWithoutARequestReverts() public {
+        usdc.mint(address(vault), 100 * UNIT);
+        vm.expectRevert(Errors.ZeroAmount.selector);
+        vault.finalizeWithdraw();
+    }
+
+    /// Only part of the requested amount has made it back. The trader gets what arrived
+    /// and the rest stays pending, rather than the call reverting and stranding it.
+    function test_finalizePaysPartialArrivals() public {
+        vm.prank(trader);
+        vault.requestWithdraw(uint64(1_000 * UNIT));
+
+        usdc.mint(address(vault), 400 * UNIT);
+        vault.finalizeWithdraw();
+
+        assertEq(usdc.balanceOf(trader), 400 * UNIT);
+        assertEq(vault.pendingWithdrawal(), 600 * UNIT);
+    }
+
+    /// A full exit clamps the mark at zero rather than underflowing. A vault below its
+    /// mark after losses has `highWaterMark > equity`, so the subtraction has to be
+    /// guarded — and clamping is correct, because there is no capital left for a
+    /// loss-carryforward to apply to.
+    function test_fullWithdrawalClampsTheMarkAtZero() public {
+        vm.prank(trader);
+        vault.requestWithdraw(uint64(10_000 * UNIT));
+
+        usdc.mint(address(vault), 10_000 * UNIT);
+        vault.finalizeWithdraw();
+
+        assertEq(vault.highWaterMark(), 0);
+    }
+
+    // ─────────────────────────────────────── fee edges
+
+    function test_sweepWithNothingOwedIsANoOp() public {
+        vault.sweepFees();
+        assertEq(usdc.balanceOf(builder), 0);
+    }
+
+    function test_sweepWithNothingArrivedIsANoOp() public {
+        vm.warp(block.timestamp + Constants.FEE_ASSESSMENT_INTERVAL + 1);
+        _setEquity(address(vault), 12_000);
+        vault.assessFees();
+
+        vault.sweepFees(); // no USDC on the EVM side yet
+        assertEq(usdc.balanceOf(builder), 0);
+        assertEq(vault.accruedBuilderFee(), 160 * UNIT, "still owed");
+    }
+
+    function test_sweepPaysInFullWhenTheBalanceCovers() public {
+        vm.warp(block.timestamp + Constants.FEE_ASSESSMENT_INTERVAL + 1);
+        _setEquity(address(vault), 12_000);
+        vault.assessFees();
+
+        usdc.mint(address(vault), 200 * UNIT);
+        vault.sweepFees();
+
+        assertEq(usdc.balanceOf(builder), 160 * UNIT);
+        assertEq(usdc.balanceOf(treasury), 40 * UNIT);
+        assertEq(vault.accruedBuilderFee(), 0);
+        assertEq(vault.accruedPlatformFee(), 0);
+    }
+
+    /// With the execution fee at zero the baseline still advances, or turning the fee on
+    /// later would bill the entire position history since the last reconcile in one go.
+    function test_zeroExecutionFeeStillAdvancesTheBaseline() public {
+        bytes32 freeListing;
+        vm.prank(builder);
+        freeListing = registry.submitListing(agent, keccak256("no-exec-fee"));
+
+        IAgentRegistry.Terms memory terms = IAgentRegistry.Terms({
+            performanceFeeBps: Constants.DEFAULT_PERFORMANCE_FEE_BPS,
+            builderSplitBps: Constants.DEFAULT_BUILDER_SPLIT_BPS,
+            executionFeeBps: 0,
+            executionBuilderSplitBps: Constants.DEFAULT_EXECUTION_BUILDER_SPLIT_BPS,
+            positionCapBps: Constants.DEFAULT_POSITION_CAP_BPS,
+            maxDrawdownBps: Constants.DEFAULT_MAX_DRAWDOWN_BPS
+        });
+        vm.prank(governance);
+        registry.approveListing(freeListing, terms);
+
+        vm.prank(otherTrader);
+        HLAgentVault v = HLAgentVault(factory.deployVault(freeListing, 0, 0));
+        usdc.mint(otherTrader, 1_000 * UNIT);
+        vm.startPrank(otherTrader);
+        usdc.approve(address(v), type(uint256).max);
+        v.deposit(uint64(1_000 * UNIT));
+        vm.stopPrank();
+        _setEquity(address(v), 1_000);
+
+        vm.prank(agent);
+        v.placeOrder(BTC_PERP, true, 1e8, _size(10), false, 2, 1);
+
+        uint128[] memory none = new uint128[](0);
+        _setPosition(address(v), BTC_PERP, _sziWorth(10));
+        v.reconcile(none);
+
+        assertEq(v.accruedBuilderFee(), 0, "no execution fee was configured");
+    }
+
+    // ─────────────────────────────────────── fast mode edges
+
+    function test_fastModeRefusedWhilePausedOrSuspended() public {
+        vm.startPrank(trader);
+        vault.pause();
+        vm.expectRevert(Errors.VaultNotActive.selector);
+        vault.enableFastMode(agent);
+        vault.resume();
+        vm.stopPrank();
+
+        vm.prank(guardian);
+        registry.suspendListing(listingId);
+        vm.prank(trader);
+        vm.expectRevert(Errors.ListingNotLive.selector);
+        vault.enableFastMode(agent);
+    }
+
+    function test_fastModeRejectsAZeroApiWallet() public {
+        vm.prank(trader);
+        vm.expectRevert(Errors.ZeroAddress.selector);
+        vault.enableFastMode(address(0));
+    }
+
+    function test_attackerCannotDisableFastMode() public {
+        vm.prank(trader);
+        vault.enableFastMode(agent);
+
+        vm.prank(attacker);
+        vm.expectRevert(Errors.NotTraderOrAgent.selector);
+        vault.disableFastMode();
+    }
 }
