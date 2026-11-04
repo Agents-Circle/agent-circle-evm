@@ -447,9 +447,14 @@ To exercise it against a live node, run `make anvil` in one terminal and
 For HyperEVM testnet (chain 998), fill the HyperEVM block of `.env.example` and run
 `make deploy-hl-testnet`. Two things that will otherwise cost you an evening:
 
-- The deploy needs about **10.4M gas**, which is over HyperEVM's 3M small-block limit.
-  Switch the deployer to **big blocks** (30M, one minute) before broadcasting, or it
-  reverts on gas for reasons that look like a contract bug.
+- The deploy needs about **10.4M gas** against HyperEVM's 3M small-block limit, and
+  splitting it does not help: the vault implementation alone is 6.1M. Switch the deployer
+  to **big blocks** (30M, one minute) with `script/hyperliquid/enable_big_blocks.py`, or
+  the deploy reverts on gas for reasons that look like a contract bug.
+- That script fails until the deployer is a **HyperCore user**, which a fresh key holding
+  EVM-side HYPE is not. Send it a little HYPE at
+  `0x2222222222222222222222222222222222222222` first — the EVM to Core direction for HYPE
+  — which creates the Core account. Only HYPE may be sent to that address.
 - Afterwards, `setVaultFactory` makes deposits work, and a market has to clear the
   whitelist's 48-hour timelock before any order does. Queue the market immediately
   rather than after testing deposits.
