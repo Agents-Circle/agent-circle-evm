@@ -63,6 +63,61 @@ jobs:
         with:
           sarif_file: ${{ steps.slither.outputs.sarif }}
 
+      # Report-only, and staying so until this passes. The first baseline called
+      # immutables "never initialized" and constants used in `placeOrder` "never used",
+      # which means Slither's model had lost writes and internal calls — the order path's
+      # limit checks among them — and a clean result from it would not be one. `docs/static-analysis.md`
+      # has the triage. When this step reports no contradictions, set `fail-on: medium`.
+      - name: Check Slither saw the code it reports on
+        if: always() && steps.slither.outputs.sarif != ''
+        run: |
+          if ! python3 script/slither-coverage.py "${{ steps.slither.outputs.sarif }}" | tee coverage.txt; then
+            echo "::warning title=Slither coverage::Slither's findings contradict the source; see the step log and docs/static-analysis.md"
+            { echo '### Slither coverage'; echo '```'; cat coverage.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Which functions Slither actually modelled, for finding what it drops. A function
+      # whose summary shows no state written (a constructor, `placeOrder`) is one it lost.
+      - name: Slither function summary (diagnostic)
+        if: always()
+        uses: crytic/slither-action@v0.4.1
+        continue-on-error: true
+        with:
+          fail-on: none
+          slither-config: slither.config.json
+          slither-args: --print function-summary --include-paths "src/hyperliquid/HLAgentVault.sol|src/AgentRegistry.sol"
+
+  # Aderyn, the second analyser in plans/security-readiness.md §3. Report-only like
+  # Slither until its baseline is triaged into docs/static-analysis.md; the report is
+  # kept as an artifact rather than uploaded as code-scanning alerts.
+  aderyn:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Aderyn
+        continue-on-error: true
+        run: |
+          npm install --global @cyfrin/aderyn
+          aderyn --version
+          aderyn . --src src --output aderyn-report.md
+          { echo '### Aderyn'; head -c 60000 aderyn-report.md; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aderyn-report
+          path: aderyn-report.md
+          if-no-files-found: warn
+
   # The locked launch parameters are written out four times — JSON, Solidity, Anchor,
   # docs. This fails the build when any of them disagree. Its own job so that parameter
   # drift reads as parameter drift in the checks list, rather than as a test failure.
