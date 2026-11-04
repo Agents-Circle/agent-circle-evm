@@ -60,3 +60,12 @@ Status as of 3 November 2026. Nothing is deployed, and nothing has been audited.
   no published audit of it. The paths the vault calls (`CoreWriterLib`,
   `PrecompileLib`, `HLConstants`) belong in audit scope.
 - OpenZeppelin v5.1.0: `Clones`, `Initializable`, `ReentrancyGuard`, `SafeERC20`.
+
+## Static analysis
+
+- Slither's first baseline is triaged in `docs/static-analysis.md`: 71 alerts, none
+  requiring a source change. **Its model of the vaults lost writes and internal calls**
+  (it calls immutables "never initialized" and `placeOrder`'s limit checks dead code), so
+  it stays report-only until `script/slither-coverage.py` passes in CI. The cause is a
+  name collision between our `library Errors` and OpenZeppelin 5.1's, which makes Slither
+  drop 56 functions. Renaming ours fixes it without changing any error selector.
