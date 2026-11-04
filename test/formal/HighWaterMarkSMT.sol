@@ -25,7 +25,10 @@ contract HighWaterMarkSMT {
     }
 
     /// HWM-1: the builder's and the platform's cuts always sum to exactly the fee.
-    function splitSumsToTotal(uint256 balance, uint256 mark, uint16 feeBps, uint16 splitBps) external pure {
+    function splitSumsToTotal(uint256 balance, uint256 mark, uint16 feeBps, uint16 splitBps)
+        external
+        pure
+    {
         HighWaterMark.State memory s = HighWaterMark.State(balance, mark);
         _pre(s, feeBps, splitBps);
         (, HighWaterMark.FeeSplit memory f) = HighWaterMark.assess(s, feeBps, splitBps);
@@ -34,10 +37,14 @@ contract HighWaterMarkSMT {
 
     /// HWM-2: the fee is at most the fee rate times the profit above the mark, and after
     /// it the trader is never below the mark they started from.
-    function feeBoundedByProfit(uint256 balance, uint256 mark, uint16 feeBps, uint16 splitBps) external pure {
+    function feeBoundedByProfit(uint256 balance, uint256 mark, uint16 feeBps, uint16 splitBps)
+        external
+        pure
+    {
         HighWaterMark.State memory s = HighWaterMark.State(balance, mark);
         _pre(s, feeBps, splitBps);
-        (HighWaterMark.State memory after_, HighWaterMark.FeeSplit memory f) = HighWaterMark.assess(s, feeBps, splitBps);
+        (HighWaterMark.State memory after_, HighWaterMark.FeeSplit memory f) =
+            HighWaterMark.assess(s, feeBps, splitBps);
         if (balance > mark) {
             assert(f.total * Constants.BPS <= (balance - mark) * feeBps);
             assert(f.total <= balance - mark);
@@ -46,18 +53,25 @@ contract HighWaterMarkSMT {
     }
 
     /// HWM-3: at or below the mark there is no fee and nothing changes.
-    function noFeeAtOrBelowMark(uint256 balance, uint256 mark, uint16 feeBps, uint16 splitBps) external pure {
+    function noFeeAtOrBelowMark(uint256 balance, uint256 mark, uint16 feeBps, uint16 splitBps)
+        external
+        pure
+    {
         HighWaterMark.State memory s = HighWaterMark.State(balance, mark);
         _pre(s, feeBps, splitBps);
         require(balance <= mark);
-        (HighWaterMark.State memory after_, HighWaterMark.FeeSplit memory f) = HighWaterMark.assess(s, feeBps, splitBps);
+        (HighWaterMark.State memory after_, HighWaterMark.FeeSplit memory f) =
+            HighWaterMark.assess(s, feeBps, splitBps);
         assert(f.total == 0 && f.builderCut == 0 && f.platformCut == 0);
         assert(after_.balance == balance && after_.highWaterMark == mark);
     }
 
     /// HWM-4: the same profit is never charged twice. Assessing again straight after an
     /// assessment charges nothing, and the mark never falls.
-    function noDoubleCharge(uint256 balance, uint256 mark, uint16 feeBps, uint16 splitBps) external pure {
+    function noDoubleCharge(uint256 balance, uint256 mark, uint16 feeBps, uint16 splitBps)
+        external
+        pure
+    {
         HighWaterMark.State memory s = HighWaterMark.State(balance, mark);
         _pre(s, feeBps, splitBps);
         (HighWaterMark.State memory once,) = HighWaterMark.assess(s, feeBps, splitBps);
@@ -79,7 +93,10 @@ contract HighWaterMarkSMT {
 
     /// HWM-6: a withdrawal never raises the mark, and never manufactures profit: the
     /// trader is above the mark afterwards only if they were before.
-    function withdrawNeverCreatesProfit(uint256 balance, uint256 mark, uint256 amount) external pure {
+    function withdrawNeverCreatesProfit(uint256 balance, uint256 mark, uint256 amount)
+        external
+        pure
+    {
         HighWaterMark.State memory s = HighWaterMark.State(balance, mark);
         require(balance < LIMIT && mark < LIMIT && amount <= balance);
         HighWaterMark.State memory w = HighWaterMark.onWithdraw(s, amount);
@@ -87,7 +104,9 @@ contract HighWaterMarkSMT {
         assert(w.balance == balance - amount);
         // Above the mark and withdrawing less than it: the profit above the mark is kept
         // exactly, so the withdrawal neither creates nor destroys a fee.
-        if (balance >= mark && amount < mark) assert(w.balance - w.highWaterMark == balance - mark);
+        if (balance >= mark && amount < mark) {
+            assert(w.balance - w.highWaterMark == balance - mark);
+        }
         // At or below the mark: still at or below it afterwards.
         if (balance <= mark) assert(w.balance <= w.highWaterMark || w.highWaterMark == 0);
     }
