@@ -19,7 +19,7 @@ as the script being broken.
 - Run them in order. Later probes depend on state earlier ones create.
 
 ```bash
-export HYPEREVM_TESTNET_RPC=https://rpc.hyperliquid-testnet.xyz/evm
+export HYPEREVM_TESTNET_RPC_URL=https://rpc.hyperliquid-testnet.xyz/evm
 export PRIVATE_KEY=...        # a throwaway key with testnet USDC and a little HYPE
 export TESTNET_USDC=0x2B3370eE501B4a559b57D449569354196457D8Ab
 ```

@@ -1,4 +1,4 @@
-.PHONY: install build test invariant verify-deploy journey gas coverage params params-write fmt lint anvil deploy-local hl-deploy-local clean
+.PHONY: install build test invariant verify-deploy journey gas coverage params params-write fmt lint anvil deploy-local hl-deploy-local deploy-amoy deploy-hl-testnet clean
 
 install:
 	forge install
@@ -69,6 +69,24 @@ hl-deploy-local:
 deploy-amoy:
 	forge script script/Deploy.s.sol:Deploy \
 		--rpc-url amoy --broadcast --verify --slow
+
+# HyperEVM testnet (chain 998). Needs GOVERNANCE, GUARDIAN, TREASURY,
+# PLATFORM_BUILDER and HYPEREVM_TESTNET_RPC_URL in the environment, and a funded
+# deployer key passed the way you prefer (--private-key, --keystore, --ledger).
+#
+# No --verify: there is no [etherscan] entry for HyperEVM, so asking to verify
+# fails the run after the contracts are already deployed.
+#
+# --slow because a large deploy wants HyperEVM big blocks (1 min, 30M gas) rather
+# than small blocks (1 s, 3M gas); a revert on gas is usually that.
+# WALLET picks how the deployer key is supplied: --interactive prompts for it,
+# --keystore <path> or --ledger avoid typing it at all. Default is a prompt, because
+# --private-key on the command line puts the key in shell history.
+WALLET ?= --interactive
+
+deploy-hl-testnet:
+	forge script script/hyperliquid/Deploy.s.sol:DeployHyperliquid \
+		--rpc-url hyperevm_testnet --broadcast --slow $(WALLET)
 
 clean:
 	forge clean
