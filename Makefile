@@ -79,9 +79,14 @@ deploy-amoy:
 #
 # --slow because a large deploy wants HyperEVM big blocks (1 min, 30M gas) rather
 # than small blocks (1 s, 3M gas); a revert on gas is usually that.
+# WALLET picks how the deployer key is supplied: --interactive prompts for it,
+# --keystore <path> or --ledger avoid typing it at all. Default is a prompt, because
+# --private-key on the command line puts the key in shell history.
+WALLET ?= --interactive
+
 deploy-hl-testnet:
 	forge script script/hyperliquid/Deploy.s.sol:DeployHyperliquid \
-		--rpc-url hyperevm_testnet --broadcast --slow
+		--rpc-url hyperevm_testnet --broadcast --slow $(WALLET)
 
 clean:
 	forge clean
