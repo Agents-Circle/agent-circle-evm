@@ -444,6 +444,16 @@ make journey
 To exercise it against a live node, run `make anvil` in one terminal and
 `make deploy-local` in another.
 
+For HyperEVM testnet (chain 998), fill the HyperEVM block of `.env.example` and run
+`make deploy-hl-testnet`. Two things that will otherwise cost you an evening:
+
+- The deploy needs about **10.4M gas**, which is over HyperEVM's 3M small-block limit.
+  Switch the deployer to **big blocks** (30M, one minute) before broadcasting, or it
+  reverts on gas for reasons that look like a contract bug.
+- Afterwards, `setVaultFactory` makes deposits work, and a market has to clear the
+  whitelist's 48-hour timelock before any order does. Queue the market immediately
+  rather than after testing deposits.
+
 ### Before mainnet
 
 - `GOVERNANCE` must be a Safe multisig, never an EOA. The deploy script cannot tell the

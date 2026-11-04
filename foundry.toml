@@ -34,6 +34,8 @@ int_types = "long"
 [rpc_endpoints]
 polygon = "${POLYGON_RPC_URL}"
 amoy = "${AMOY_RPC_URL}"
+hyperevm = "${HYPEREVM_MAINNET_RPC_URL}"
+hyperevm_testnet = "${HYPEREVM_TESTNET_RPC_URL}"
 
 [etherscan]
 polygon = { key = "${POLYGONSCAN_API_KEY}", chain = 137 }
