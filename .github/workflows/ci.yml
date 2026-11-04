@@ -87,9 +87,9 @@ jobs:
           slither-config: slither.config.json
           slither-args: --print function-summary --include-paths "src/hyperliquid/HLAgentVault.sol|src/AgentRegistry.sol"
 
-  # Aderyn, the second analyser in plans/security-readiness.md §3. Report-only like
-  # Slither until its baseline is triaged into docs/static-analysis.md; the report is
-  # kept as an artifact rather than uploaded as code-scanning alerts.
+  # Aderyn, the second analyser in plans/security-readiness.md §3. Its first baseline is
+  # triaged in docs/static-analysis.md. Report-only like Slither until the `Errors`
+  # rename lands; the report is kept as an artifact, not uploaded as code-scanning alerts.
   aderyn:
     runs-on: ubuntu-latest
     steps:

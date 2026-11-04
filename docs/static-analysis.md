@@ -26,9 +26,33 @@ internal calls in particular.
   model `cancelAll` → `_release`, and the whitelists' constructor writes (it proposes
   making their `governance` immutable).
 
-The cause isn't identified yet. Slither couldn't be run locally for this triage, and
-the CI log shows no parse error. Until it is fixed, **a clean Slither result says nothing
-about the order path**. That's why the job stays report-only.
+**Cause (found by this PR's diagnostic step):** Slither logs
+`ERROR:ContractSolcParsing:Impossible to generate IR for …: 'NoneType' object has no
+attribute 'parameters'` for **56 functions**. They include every constructor of the four
+contracts, `placeOrder`, `reconcile`, `requestWithdraw`, `finalizeWithdraw`,
+`initialize` and the access modifiers.
+
+- It's a name collision. Our `library Errors` (`src/libraries/Errors.sol`) and
+  OpenZeppelin 5.1's `library Errors` (`utils/Errors.sol`, reached through
+  `SafeERC20` → `Address`) share a name.
+- Slither resolves `Errors.ZeroAddress()` and the rest against OpenZeppelin's library,
+  doesn't find the error, and drops the function's IR.
+- The split is exact. The four contracts that import OpenZeppelin lose 18, 17, 19 and 2
+  functions. `HLMarketWhitelist` and `VenueWhitelist` use the same `Errors` and import no
+  OpenZeppelin, and they lose none.
+- Aderyn flags the same thing independently: H-2, "Contract Name Reused in Different
+  Files", on `src/libraries/Errors.sol`.
+
+**Fix (needs Udoka's OK, as a `src/` change):** rename our library, for example to
+`CircleErrors`, in `src/libraries/Errors.sol` and its six importers.
+- A custom error's selector is `keccak256("ZeroAddress()")` and doesn't include the
+  library name, so the ABI, revert data and tests are unaffected.
+- The bytecode differs only in the metadata hash. That still means the testnet
+  deployment's verified source no longer matches, so do it with the next deploy or
+  accept the mismatch.
+
+Until it is fixed, **a clean Slither result says nothing about the order path**. That's
+why the job stays report-only.
 `script/slither-coverage.py` detects the contradictions above in the SARIF and warns in
 CI. When it reports none, set `fail-on: medium`. The diagnostic step in `ci.yml` prints
 Slither's `function-summary` for the two main contracts, which shows what each function
@@ -57,6 +81,22 @@ triage that run's findings again. The verdicts below cover only what Slither cou
 
 ## Aderyn
 
-The `aderyn` job in `ci.yml` runs Aderyn over `src/` and keeps `aderyn-report.md` as a
-build artifact and in the job summary. Its baseline is not triaged yet. When it is, add
-it here in the same form.
+Aderyn 0.6.8, in the `aderyn` job, ran 88 detectors over the 11 files in `src/` (1,495
+nSLOC). It found 2 high and 12 low. The report is kept as the `aderyn-report` build
+artifact.
+
+| Finding | Count | Verdict |
+|---|---|---|
+| H-1 Reentrancy: state change after external call | 23 (15 `AgentVault`, 8 `HLAgentVault`) | **Accepted.** The external calls go to the protocol's own `registry` and `whitelist` (immutables set at construction), to USDC, to HyperCore read precompiles (`staticcall`) and to CoreWriter, which enqueues and never calls back. The flagged entry points are `nonReentrant` (`placeOrder`, `deposit`, `finalizeWithdraw`, `assessFees`) or `initializer`, except `enableFastMode`. That one is only `onlyTrader`, but its external calls are a `view` read of the registry and three CoreWriter actions, none of which can call back. The 15 `AgentVault` hits are the deferred Polygon vault; its adapters are timelocked, and its `execute` path checks balances before and after. Re-check both when Polygon clones return. |
+| H-2 Contract name reused in different files | 1 (`Errors`) | **Fix: the Slither root cause above.** Rename the library. |
+| L-8 State variable could be immutable | 5 | **Fix at the next deploy, as recommended above.** `governance` in both whitelists and in `AgentRegistry` is assigned only in the constructor (the registry has no governance setter, by design). `tierBonds` and `tierCeilings` can't be immutable because Solidity doesn't allow immutable arrays. |
+| L-7 State change without event | 1 (`AgentRegistry.notifyAumDelta`) | **Fix, low.** An `AumChanged(listingId, builder, totalAum)` event would let the indexer follow AUM against the ceiling without re-reading storage. |
+| L-10 Unchecked return | 1 (`AgentVault.sol:559`, `IVenueAdapter.exit`) | **Accepted for now.** It's the deferred Polygon path. The vault values positions through `positionValue`, not through `exit`'s return. Revisit with Polygon clones. |
+| L-9 TODO comment | 1 (`AgentVault.sol:620`, Streamflow streaming) | **Accepted.** It's a recorded design note on the deferred Polygon vault. The handbook dropped streaming for lump-sum payouts. |
+| L-1 Costly operations in loop | 5 | **Accepted.** Same as Slither's: bounded by `MAX_OPEN_ORDERS` (8) or by the 3 tiers. |
+| L-6 Loop contains `require`/`revert` | 5 | **Accepted.** These are bounded loops over caller-supplied cloids or adapters, and a revert is the intended response to a bad entry. |
+| L-11 Uninitialized local variable | 9 | **Accepted.** These are all `for (uint256 i; …)` loop counters, which start at zero. |
+| L-2, L-3 Large literal, literal instead of constant | 1 + 4 | **Accepted.** Unit and scale literals with their meaning in a comment beside them. No behavioural effect. |
+| L-4 Modifier invoked only once | 2 | **Accepted.** These are access modifiers kept as modifiers so the access rule reads at the function signature. |
+| L-5 `nonReentrant` not the first modifier | 1 (`AgentRegistry.slashBond`) | **Accepted.** The modifiers before it are access checks with no external calls. |
+| L-12 Public function not used internally | 1 (`AgentVault.isOrderAuthorised`) | **Accepted.** It's a view that venue adapters call. `external` would be marginally cheaper; change it with Polygon clones. |
