@@ -1,7 +1,11 @@
 # Agent Circle — EVM
 
-A marketplace for autonomous trading agents in prediction markets, implemented in
-Solidity for Polygon.
+A marketplace for autonomous trading agents, implemented in Solidity. **Hyperliquid
+first:** the primary target is HyperEVM, in `src/hyperliquid/`, where every trader's vault
+is its own EIP-1167 clone and therefore its own HyperCore account
+([ADR-0001](docs/adr/0001-vault-topology.md), accepted). The original Polygon contracts —
+`AgentVault` and `VenueWhitelist`, built for prediction markets — remain as the reference
+implementation, and their conversion to clones is deferred to Phase 6.
 
 Developers list self-built, self-hosted agents. Traders allocate capital those agents
 trade on their behalf. Custody never transfers: the trader is the sole withdrawal
@@ -14,6 +18,11 @@ they are enforced when the order is authorised and re-checked when it settles, a
 order
 that would breach a trader's limits cannot settle. §4 is why that distinction exists and
 what is still unresolved about it.
+
+On HyperEVM the claim is split in two, and the split is the one thing not to blur: **vault
+mode** checks the limits before every order; **fast mode** — an API wallet trading
+directly, for builder-code revenue — *monitors* them with a kill switch.
+[ADR-0002](docs/adr/0002-hyperliquid-execution-modes.md) defines both.
 
 ```bash
 make journey
@@ -28,15 +37,32 @@ the fastest way to see what this does.
 
 | | |
 |---|---|
-| Tests | 134 passing |
-| Line coverage | 98.9% (`VenueWhitelist` at 100%) |
-| Branch coverage | 85.8% (`AgentRegistry` and `VenueWhitelist` at 100%) |
-| Function coverage | 100% |
+| Tests | 246 passing, across both chains, including an `HLAgentVault` invariant suite |
+| Line coverage | 98.3% (`HLAgentVault` 96.9%; the factory and both whitelists at 100%) |
+| Branch coverage | 85.2% (`HLAgentVault` 82.3%, `AgentRegistry` 95.2%; the factory and both whitelists at 100%) |
+| Function coverage | 99.2% (`HLAgentVault` 34 of 35) |
 | Local deployment | Verified — contracts deployed and the full journey driven against a live node |
-| Testnet | Not yet deployed to Amoy |
+| Testnet | **HyperEVM testnet (chain 998)**, deployed 4 November 2026, addresses below. Polygon Amoy: not deployed |
+| Mainnet | Not deployed anywhere |
 | Audit | Not started |
 
-Branch coverage was 51% and is now 85.8%. The gap closed was almost entirely revert
+Figures from `forge test` and `make coverage` on 4 November 2026.
+
+**HyperEVM testnet (chain 998):**
+
+| Contract | Address |
+|---|---|
+| `AgentRegistry` | `0x6757474DDC00CDa23F497faC09A2CD4B27117aCe` |
+| `HLMarketWhitelist` | `0x1445B9E5080a9fB5dfdB97537935f8D4c40F3f4A` |
+| `HLAgentVault` (implementation) | `0x3861eAbE8219E52a913B37fdB63bB0cF5BE0bCcb` |
+| `HLAgentVaultFactory` | `0x7c5F82a727ff7823E1EabC49119A6d6e823779b8` |
+
+`setVaultFactory` is set and `make verify-deploy` passes against it, with
+`ALLOW_EOA_GOVERNANCE=true` because testnet governance is an EOA. BTC, ETH and SOL are
+queued on the whitelist and executable from 6 November 2026, 02:35 UTC; until then
+deposits work and orders do not. The probes in `script/probes/` have not been run.
+
+Branch coverage was 51% and is now 85.2%. The gap closed was almost entirely revert
 paths: a guard whose refusal is never exercised is a guard nobody has proved refuses for
 the reason its name claims, and one that silently stopped guarding would have left every
 test still passing. `AgentVault` is the remaining 75%, and what is left there is mostly
@@ -378,7 +404,9 @@ is backed by its own vault's idle — but reconciling a settled fill back to the
 that caused it needs a settlement notification. The exchange hardcodes `order.maker` as
 both the source of collateral and the destination for outcome tokens, so a singleton
 vault cannot express whose position is whose — see
-[ADR-0001](docs/adr/0001-vault-topology.md), which proposes per-vault clones.
+[ADR-0001](docs/adr/0001-vault-topology.md), which chose per-vault clones (accepted 2
+November 2026). The HyperEVM vault is written as a clone from the start; converting this
+Polygon singleton is deferred to Phase 6.
 
 ### What is not built, and why
 
@@ -400,9 +428,13 @@ smuggled through that one.
 
 ```
 src/
-  AgentRegistry.sol           builders, listings, bonds, tiers, AUM ceilings
-  AgentVault.sol              custody, limit enforcement, order reservations, fees
-  VenueWhitelist.sol          timelocked allowlist with a veto-only guardian
+  AgentRegistry.sol           builders, listings, bonds, tiers, AUM ceilings (both chains)
+  AgentVault.sol              Polygon: custody, limit enforcement, order reservations, fees
+  VenueWhitelist.sol          Polygon: timelocked allowlist with a veto-only guardian
+  hyperliquid/
+    HLAgentVault.sol          HyperEVM: per-trader clone, the six checks, reconcile, fast mode
+    HLAgentVaultFactory.sol   clone deployment and `isVault` provenance
+    HLMarketWhitelist.sol     timelocked market additions, per-asset caps, guardian
   interfaces/
     IAgentRegistry.sol
     IVenueAdapter.sol         the seam described in §4: execute, exit,
@@ -418,11 +450,19 @@ test/
   AgentVault.t.sol            custody, limits, isolation, fees
   Reservations.t.sol          order authorisation and the permission-free exit
   VenueWhitelist.t.sol        the Drift lesson, encoded
+  CrossVaultIsolation.t.sol   one trader's vault can never touch another's
+  hyperliquid/                HLAgentVault, whitelist, deploy verification, an invariant
+                              suite, and HyperCore mocks
 script/
-  Deploy.s.sol                real deployment
+  Deploy.s.sol                Polygon deployment
   DeployLocal.s.sol           local chain harness
+  check-params.py             `make params`: Solidity, Anchor and docs against parameters.json
+  hyperliquid/                HyperEVM deploy, `VerifyDeploy`, big-blocks helper
+  probes/                     testnet probes (written, not yet run) and their questions
 docs/
-  adr/0001-vault-topology.md  singleton vs per-vault clones; open decision
+  adr/0001-vault-topology.md  singleton vs per-vault clones; accepted, Option C (clones)
+  adr/0002-hyperliquid-execution-modes.md  vault mode vs fast mode; accepted
+  known-issues.md             what we know and are not claiming
 ```
 
 ---
