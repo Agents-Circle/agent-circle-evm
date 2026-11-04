@@ -87,6 +87,28 @@ jobs:
           slither-config: slither.config.json
           slither-args: --print function-summary --include-paths "src/hyperliquid/HLAgentVault.sol|src/AgentRegistry.sol"
 
+  # Machine-checked properties (test/formal/, IDs in the handbook's
+  # plans/verification/properties.md). Fails only on a counterexample; a solver timeout
+  # is reported as unproved and does not fail, because it says nothing about the code.
+  formal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch solc 0.8.24
+        run: forge build --skip test --skip script
+
+      - name: SMTChecker (CHC)
+        run: script/formal/smtcheck.sh chc
+
   # Aderyn, the second analyser in plans/security-readiness.md §3. Its first baseline is
   # triaged in docs/static-analysis.md. Report-only like Slither until the `Errors`
   # rename lands; the report is kept as an artifact, not uploaded as code-scanning alerts.
