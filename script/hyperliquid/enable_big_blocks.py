@@ -16,10 +16,15 @@ consequences, hit in this order:
 The key is read from the environment and is never written anywhere.
 
     pip install hyperliquid-python-sdk
-    DEPLOYER_PRIVATE_KEY=0x... python3 script/hyperliquid/enable_big_blocks.py
-    DEPLOYER_PRIVATE_KEY=0x... python3 script/hyperliquid/enable_big_blocks.py --off
+    python3 script/hyperliquid/enable_big_blocks.py          # prompts for the key
+    python3 script/hyperliquid/enable_big_blocks.py --off
+
+It reads DEPLOYER_PRIVATE_KEY if that is set, and otherwise prompts without echoing. The
+prompt is the better habit: a key passed as an environment assignment on the command line
+lands in shell history, and a key exported in one shell is not visible to the next.
 """
 
+import getpass
 import json
 import os
 import sys
@@ -43,7 +48,13 @@ def using_big_blocks(address: str) -> object:
 def main() -> int:
     key = os.environ.get("DEPLOYER_PRIVATE_KEY")
     if not key:
-        print("DEPLOYER_PRIVATE_KEY is not set.", file=sys.stderr)
+        try:
+            key = getpass.getpass("deployer private key (not echoed): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nno key given.", file=sys.stderr)
+            return 2
+    if not key:
+        print("no key given.", file=sys.stderr)
         return 2
 
     try:
