@@ -6,7 +6,7 @@ import { AgentRegistry } from "../src/AgentRegistry.sol";
 import { AgentVault } from "../src/AgentVault.sol";
 import { VenueWhitelist } from "../src/VenueWhitelist.sol";
 import { IAgentRegistry } from "../src/interfaces/IAgentRegistry.sol";
-import { Errors } from "../src/libraries/Errors.sol";
+import { CircleErrors } from "../src/libraries/CircleErrors.sol";
 import { Constants } from "../src/libraries/Constants.sol";
 import { MockERC20 } from "./mocks/MockERC20.sol";
 import {
@@ -113,7 +113,7 @@ contract ReservationsTest is Test {
         _authorise(ORDER_A, 1_000 * UNIT);
 
         vm.prank(agent);
-        vm.expectRevert(Errors.PositionCapExceeded.selector);
+        vm.expectRevert(CircleErrors.PositionCapExceeded.selector);
         vault.authoriseOrder(
             id, address(venue), ORDER_B, 1_000 * UNIT, uint64(block.timestamp + 10 minutes)
         );
@@ -125,7 +125,7 @@ contract ReservationsTest is Test {
         _authorise(ORDER_A, 1_000 * UNIT);
 
         vm.prank(agent);
-        vm.expectRevert(Errors.PositionCapExceeded.selector);
+        vm.expectRevert(CircleErrors.PositionCapExceeded.selector);
         vault.executeTrade(
             id, address(venue), 1_000 * UNIT, abi.encode(id, uint256(1_000 * UNIT), 1_000 * UNIT)
         );
@@ -229,7 +229,7 @@ contract ReservationsTest is Test {
         }
 
         vm.prank(agent);
-        vm.expectRevert(Errors.TooManyOpenOrders.selector);
+        vm.expectRevert(CircleErrors.TooManyOpenOrders.selector);
         vault.authoriseOrder(id, address(venue), ORDER_B, 1, uint64(block.timestamp + 10 minutes));
     }
 
@@ -273,7 +273,7 @@ contract ReservationsTest is Test {
         hashes[0] = ORDER_A;
 
         vm.prank(attacker);
-        vm.expectRevert(Errors.NotTraderOrAgent.selector);
+        vm.expectRevert(CircleErrors.NotTraderOrAgent.selector);
         vault.cancelOrders(hashes);
     }
 
@@ -281,23 +281,23 @@ contract ReservationsTest is Test {
         uint64 exp = uint64(block.timestamp + 10 minutes);
 
         vm.prank(trader);
-        vm.expectRevert(Errors.NotAgentAuthority.selector);
+        vm.expectRevert(CircleErrors.NotAgentAuthority.selector);
         vault.authoriseOrder(id, address(venue), ORDER_A, 100 * UNIT, exp);
 
         vm.prank(attacker);
-        vm.expectRevert(Errors.NotAgentAuthority.selector);
+        vm.expectRevert(CircleErrors.NotAgentAuthority.selector);
         vault.authoriseOrder(id, address(venue), ORDER_A, 100 * UNIT, exp);
     }
 
     function test_orderMustNameAWhitelistedVenueAndABoundedLifetime() public {
         vm.startPrank(agent);
 
-        vm.expectRevert(Errors.VenueNotWhitelisted.selector);
+        vm.expectRevert(CircleErrors.VenueNotWhitelisted.selector);
         vault.authoriseOrder(
             id, attacker, ORDER_A, 100 * UNIT, uint64(block.timestamp + 10 minutes)
         );
 
-        vm.expectRevert(Errors.OrderLifetimeTooLong.selector);
+        vm.expectRevert(CircleErrors.OrderLifetimeTooLong.selector);
         vault.authoriseOrder(
             id,
             address(venue),
@@ -306,10 +306,10 @@ contract ReservationsTest is Test {
             uint64(block.timestamp + Constants.MAX_ORDER_LIFETIME + 1)
         );
 
-        vm.expectRevert(Errors.OrderExpired.selector);
+        vm.expectRevert(CircleErrors.OrderExpired.selector);
         vault.authoriseOrder(id, address(venue), ORDER_A, 100 * UNIT, uint64(block.timestamp));
 
-        vm.expectRevert(Errors.ZeroAmount.selector);
+        vm.expectRevert(CircleErrors.ZeroAmount.selector);
         vault.authoriseOrder(id, address(venue), ORDER_A, 0, uint64(block.timestamp + 10 minutes));
         vm.stopPrank();
     }
@@ -318,7 +318,7 @@ contract ReservationsTest is Test {
         _authorise(ORDER_A, 100 * UNIT);
 
         vm.prank(agent);
-        vm.expectRevert(Errors.OrderAlreadyExists.selector);
+        vm.expectRevert(CircleErrors.OrderAlreadyExists.selector);
         vault.authoriseOrder(
             id, address(venue), ORDER_A, 100 * UNIT, uint64(block.timestamp + 10 minutes)
         );
@@ -330,7 +330,7 @@ contract ReservationsTest is Test {
         _authorise(ORDER_A, 1_000 * UNIT);
 
         vm.prank(attacker);
-        vm.expectRevert(Errors.NotTraderOrAgent.selector);
+        vm.expectRevert(CircleErrors.NotTraderOrAgent.selector);
         vault.cancelOrder(ORDER_A);
 
         vm.prank(trader);
@@ -350,7 +350,7 @@ contract ReservationsTest is Test {
     function test_expiredReservationIsReleasableByAnyone() public {
         _authorise(ORDER_A, 1_000 * UNIT);
 
-        vm.expectRevert(Errors.OrderNotExpired.selector);
+        vm.expectRevert(CircleErrors.OrderNotExpired.selector);
         vault.releaseExpiredOrder(ORDER_A);
 
         vm.warp(block.timestamp + 11 minutes);
@@ -371,7 +371,7 @@ contract ReservationsTest is Test {
         vault.cancelOrder(ORDER_A);
 
         vm.prank(trader);
-        vm.expectRevert(Errors.OrderNotFound.selector);
+        vm.expectRevert(CircleErrors.OrderNotFound.selector);
         vault.cancelOrder(ORDER_A);
     }
 
@@ -405,7 +405,7 @@ contract ReservationsTest is Test {
         assertEq(vault.availableIdle(id), 9_000 * UNIT);
 
         vm.prank(trader);
-        vm.expectRevert(Errors.InsufficientBalance.selector);
+        vm.expectRevert(CircleErrors.InsufficientBalance.selector);
         vault.withdraw(id, 9_500 * UNIT);
 
         vm.prank(trader);
@@ -494,7 +494,7 @@ contract ReservationsTest is Test {
         whitelist.removeVenue(address(venue));
 
         vm.prank(agent);
-        vm.expectRevert(Errors.VenueNotWhitelisted.selector);
+        vm.expectRevert(CircleErrors.VenueNotWhitelisted.selector);
         vault.executeTrade(id, address(venue), 1, abi.encode(id, uint256(1), uint256(1)));
 
         vm.prank(trader);
@@ -529,7 +529,7 @@ contract ReservationsTest is Test {
         _openPosition(1_000 * UNIT);
 
         vm.prank(attacker);
-        vm.expectRevert(Errors.NotTraderOrAgent.selector);
+        vm.expectRevert(CircleErrors.NotTraderOrAgent.selector);
         vault.exitPosition(id, address(venue), abi.encode(uint256(10_000)));
     }
 
@@ -559,7 +559,7 @@ contract ReservationsTest is Test {
         liar.setPositionValue(id, 1_000_000 * UNIT);
 
         vm.prank(trader);
-        vm.expectRevert(Errors.VenueNotWhitelisted.selector);
+        vm.expectRevert(CircleErrors.VenueNotWhitelisted.selector);
         vault.exitPosition(id, address(liar), abi.encode(uint256(10_000)));
 
         assertEq(vault.totalValue(id), 10_000 * UNIT, "vault value must be unaffected");
@@ -567,7 +567,7 @@ contract ReservationsTest is Test {
 
     function test_exitOnUnknownVaultReverts() public {
         vm.prank(trader);
-        vm.expectRevert(Errors.VaultNotFound.selector);
+        vm.expectRevert(CircleErrors.VaultNotFound.selector);
         vault.exitPosition(keccak256("nope"), address(venue), abi.encode(uint256(10_000)));
     }
 }

@@ -36,7 +36,7 @@ interface IAgentRegistry {
     /// `positionCapBps` would be accepted by every bound in `_approveListing` while
     /// silently mispricing the listing. A multisig signer reading a decoded simulation
     /// should not have to count arguments. This also mirrors the Anchor side's
-    /// `FeeConfig`, which the error names in `Errors.sol` are already kept parallel to.
+    /// `FeeConfig`, which the error names in `CircleErrors.sol` are already kept parallel to.
     struct Terms {
         uint16 performanceFeeBps;
         uint16 builderSplitBps;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.24;
 
-import { Errors } from "./libraries/Errors.sol";
+import { CircleErrors } from "./libraries/CircleErrors.sol";
 
 /// The set of venue adapters vaults are permitted to call.
 ///
@@ -38,25 +38,27 @@ contract VenueWhitelist {
     event GuardianChanged(address indexed previous, address indexed next);
 
     modifier onlyGovernance() {
-        if (msg.sender != governance) revert Errors.NotGovernance();
+        if (msg.sender != governance) revert CircleErrors.NotGovernance();
         _;
     }
 
     /// Governance is the normal path for removal; the guardian is the 3am path.
     modifier onlyGovernanceOrGuardian() {
-        if (msg.sender != governance && msg.sender != guardian) revert Errors.NotGuardian();
+        if (msg.sender != governance && msg.sender != guardian) revert CircleErrors.NotGuardian();
         _;
     }
 
     constructor(address governance_, address guardian_, uint64 delay_) {
-        if (governance_ == address(0) || guardian_ == address(0)) revert Errors.ZeroAddress();
+        if (governance_ == address(0) || guardian_ == address(0)) {
+            revert CircleErrors.ZeroAddress();
+        }
         governance = governance_;
         guardian = guardian_;
         delay = delay_;
     }
 
     function queueAddition(address venue) external onlyGovernance {
-        if (venue == address(0)) revert Errors.ZeroAddress();
+        if (venue == address(0)) revert CircleErrors.ZeroAddress();
         uint64 eta = uint64(block.timestamp) + delay;
         queued[venue] = Queued({ eta: eta, vetoed: false });
         emit AdditionQueued(venue, eta);
@@ -64,9 +66,9 @@ contract VenueWhitelist {
 
     function executeAddition(address venue) external onlyGovernance {
         Queued memory q = queued[venue];
-        if (q.eta == 0) revert Errors.TimelockNotQueued();
-        if (q.vetoed) revert Errors.ProposalVetoed();
-        if (block.timestamp < q.eta) revert Errors.TimelockNotElapsed();
+        if (q.eta == 0) revert CircleErrors.TimelockNotQueued();
+        if (q.vetoed) revert CircleErrors.ProposalVetoed();
+        if (block.timestamp < q.eta) revert CircleErrors.TimelockNotElapsed();
 
         delete queued[venue];
         isWhitelisted[venue] = true;
@@ -74,7 +76,7 @@ contract VenueWhitelist {
     }
 
     function vetoAddition(address venue) external onlyGovernanceOrGuardian {
-        if (queued[venue].eta == 0) revert Errors.TimelockNotQueued();
+        if (queued[venue].eta == 0) revert CircleErrors.TimelockNotQueued();
         queued[venue].vetoed = true;
         emit AdditionVetoed(venue, msg.sender);
     }
@@ -89,7 +91,7 @@ contract VenueWhitelist {
     /// Deliberately immediate: a suspected-compromised guardian needs replacing faster
     /// than a timelock allows.
     function setGuardian(address next) external onlyGovernance {
-        if (next == address(0)) revert Errors.ZeroAddress();
+        if (next == address(0)) revert CircleErrors.ZeroAddress();
         emit GuardianChanged(guardian, next);
         guardian = next;
     }

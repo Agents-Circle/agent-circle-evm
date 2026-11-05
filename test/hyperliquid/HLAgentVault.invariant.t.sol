@@ -42,7 +42,7 @@ contract HLVaultHandler is Test {
     address public trader;
     address public agent;
     address public guardian;
-    uint32[2] public assets;
+    uint32[3] public assets;
 
     // ── ghosts
     uint128 public nextCloid = 1;
@@ -53,6 +53,8 @@ contract HLVaultHandler is Test {
     uint256 public capBreaches;
     /// An order accepted while the vault was already at or past its drawdown limit.
     uint256 public drawdownBreaches;
+    /// A cloid the vault had already seen that it booked a second time.
+    uint256 public duplicatesAccepted;
     /// A performance fee accrued by an assessment that did not see equity above the mark.
     uint256 public feesWithoutGain;
 
@@ -67,7 +69,7 @@ contract HLVaultHandler is Test {
         address trader_,
         address agent_,
         address guardian_,
-        uint32[2] memory assets_
+        uint32[3] memory assets_
     ) {
         vault = vault_;
         registry = registry_;
@@ -96,7 +98,7 @@ contract HLVaultHandler is Test {
         uint8 pxSeed,
         bool reduceOnly
     ) external {
-        uint32 asset = assets[assetSeed % 2];
+        uint32 asset = assets[assetSeed % 3];
         // $1 to $600 of worst-case cost at a $0.50–$2.00 limit, against a cap of about
         // $1,200 ($300 on the thin market) shared with positions and every reservation:
         // many orders pass, and the cap still regularly refuses. Both sides get exercised.
@@ -127,6 +129,20 @@ contract HLVaultHandler is Test {
         } catch { }
     }
 
+    /// Re-offer a cloid the vault has already seen. Every one of these must be refused.
+    /// `placeOrder` above always mints a fresh cloid, so the fuzzer would never try a
+    /// duplicate on its own - which is why one that slipped through on asset 0 reached
+    /// `main`. A cloid stays here after it is cancelled, so released ones are re-offered
+    /// too.
+    function placeDuplicate(uint256 idx, bool reduceOnly) external {
+        if (cloids.length == 0) return;
+        uint128 cloid = cloids[idx % cloids.length];
+        vm.prank(agent);
+        try vault.placeOrder(assets[idx % 3], true, 1e8, 1e8, reduceOnly, 1, cloid) {
+            ++duplicatesAccepted;
+        } catch { }
+    }
+
     function cancelOne(uint256 idx, bool asTrader) external {
         if (cloids.length == 0) return;
         uint128 cloid = cloids[idx % cloids.length];
@@ -136,7 +152,7 @@ contract HLVaultHandler is Test {
 
     function exitPosition(uint8 assetSeed) external {
         vm.prank(agent);
-        try vault.exitPosition(assets[assetSeed % 2]) { } catch { }
+        try vault.exitPosition(assets[assetSeed % 3]) { } catch { }
     }
 
     // ───────────────────────────────────────── trader
@@ -212,7 +228,7 @@ contract HLVaultHandler is Test {
     }
 
     function moveMark(uint8 assetSeed, uint64 seed) external {
-        MockMarkPx(MARK_PX_PRECOMPILE).set(assets[assetSeed % 2], uint64(bound(seed, 5e3, 2e4)));
+        MockMarkPx(MARK_PX_PRECOMPILE).set(assets[assetSeed % 3], uint64(bound(seed, 5e3, 2e4)));
     }
 }
 
@@ -234,6 +250,7 @@ contract HLAgentVaultInvariantTest is Test {
     address constant CORE_DEPOSIT_WALLET = 0x6B9E773128f453f5c2C60935Ee2DE2CBc5390A24;
 
     uint256 constant UNIT = 1e6;
+    uint32 constant SOL_PERP = 0; // asset index 0 on testnet - the one a zero-check misses
     uint32 constant BTC_PERP = 3;
     uint32 constant THIN_PERP = 77;
 
@@ -292,13 +309,16 @@ contract HLAgentVaultInvariantTest is Test {
 
         vm.startPrank(governance);
         registry.approveListingAtLaunchTerms(listingId);
+        whitelist.queueAddition(SOL_PERP, 0); // index 0: a real asset, and the zero value
         whitelist.queueAddition(BTC_PERP, 0);
         whitelist.queueAddition(THIN_PERP, 300);
         vm.warp(block.timestamp + Constants.VENUE_TIMELOCK_DELAY);
+        whitelist.executeAddition(SOL_PERP);
         whitelist.executeAddition(BTC_PERP);
         whitelist.executeAddition(THIN_PERP);
         vm.stopPrank();
 
+        MockMarkPx(MARK_PX_PRECOMPILE).set(SOL_PERP, 1e4);
         MockMarkPx(MARK_PX_PRECOMPILE).set(BTC_PERP, 1e4);
         MockMarkPx(MARK_PX_PRECOMPILE).set(THIN_PERP, 1e4);
 
@@ -314,7 +334,14 @@ contract HLAgentVaultInvariantTest is Test {
         vault.reconcile(new uint128[](0));
 
         handler = new HLVaultHandler(
-            vault, registry, whitelist, listingId, trader, agent, guardian, [BTC_PERP, THIN_PERP]
+            vault,
+            registry,
+            whitelist,
+            listingId,
+            trader,
+            agent,
+            guardian,
+            [SOL_PERP, BTC_PERP, THIN_PERP]
         );
         targetContract(address(handler));
     }
@@ -344,6 +371,13 @@ contract HLAgentVaultInvariantTest is Test {
         assertEq(handler.capBreaches(), 0, "an order was accepted over the position cap");
     }
 
+    /// A cloid is used once and stays used. `_release` marks a reservation released
+    /// without clearing it, and CoreWriter gives the vault no way to attribute fills, so
+    /// a second order under the same cloid would make its reservation unaccountable.
+    function invariant_cloidsAreNeverReused() public view {
+        assertEq(handler.duplicatesAccepted(), 0, "a cloid was booked twice");
+    }
+
     function invariant_noOrderPastDrawdownLimit() public view {
         assertEq(handler.drawdownBreaches(), 0, "an order was accepted past the drawdown limit");
     }
@@ -370,6 +404,7 @@ contract HLAgentVaultInvariantTest is Test {
         // guardian has delisted every market the vault trades.
         vm.startPrank(guardian);
         registry.suspendListing(handler.listingId());
+        whitelist.removeMarket(SOL_PERP);
         whitelist.removeMarket(BTC_PERP);
         whitelist.removeMarket(THIN_PERP);
         vm.stopPrank();
@@ -408,5 +443,23 @@ contract HLAgentVaultInvariantTest is Test {
         assertGt(vault.reserved(), 0);
         invariant_reservedMatchesOutstandingOrders();
         invariant_traderCanAlwaysClearAndWithdraw();
+    }
+
+    /// The same guard for `placeDuplicate`, which returns early when no cloid has been
+    /// placed yet and would otherwise make `invariant_cloidsAreNeverReused` vacuous.
+    /// Reduce-only on asset index 0 is the combination that used to slip through, so it
+    /// is the one asserted here.
+    function test_handlerReachesDuplicateCloids() public {
+        handler.placeOrder(0, true, 100, 100, true); // asset index 0, reduce-only
+        assertEq(handler.placed(), 1);
+        uint256 openBefore = vault.openOrders();
+
+        handler.placeDuplicate(0, true);
+        handler.placeDuplicate(0, false);
+
+        assertEq(handler.duplicatesAccepted(), 0, "a duplicate cloid was accepted");
+        assertEq(vault.openOrders(), openBefore, "a refused duplicate consumed a slot");
+        invariant_cloidsAreNeverReused();
+        invariant_reservedMatchesOutstandingOrders();
     }
 }

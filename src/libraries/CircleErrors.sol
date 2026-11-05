@@ -3,7 +3,7 @@ pragma solidity 0.8.24;
 
 /// Shared revert reasons, named to mirror the Anchor `#[error_code]` variants on the
 /// Solana implementation so a failure means the same thing on either chain.
-library Errors {
+library CircleErrors {
     // ── authority
     error NotTrader();
     error NotAgentAuthority();

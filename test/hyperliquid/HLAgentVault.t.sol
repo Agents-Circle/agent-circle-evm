@@ -8,7 +8,7 @@ import { IAgentRegistry } from "../../src/interfaces/IAgentRegistry.sol";
 import { HLAgentVault } from "../../src/hyperliquid/HLAgentVault.sol";
 import { HLAgentVaultFactory } from "../../src/hyperliquid/HLAgentVaultFactory.sol";
 import { HLMarketWhitelist } from "../../src/hyperliquid/HLMarketWhitelist.sol";
-import { Errors } from "../../src/libraries/Errors.sol";
+import { CircleErrors } from "../../src/libraries/CircleErrors.sol";
 import { Constants } from "../../src/libraries/Constants.sol";
 import { MockERC20 } from "../mocks/MockERC20.sol";
 import {
@@ -203,19 +203,19 @@ contract HLAgentVaultTest is Test {
         assertFalse(factory.isVault(attacker));
 
         vm.prank(attacker);
-        vm.expectRevert(Errors.NotVault.selector);
+        vm.expectRevert(CircleErrors.NotVault.selector);
         registry.notifyAumDelta(listingId, int256(1_000_000 * UNIT));
     }
 
     function test_vaultFactoryIsOneShot() public {
         vm.prank(governance);
-        vm.expectRevert(Errors.AlreadySet.selector);
+        vm.expectRevert(CircleErrors.AlreadySet.selector);
         registry.setVaultFactory(attacker);
     }
 
     function test_oneTraderCannotOpenTwoVaultsAgainstOneListing() public {
         vm.prank(trader);
-        vm.expectRevert(Errors.VaultAlreadyExists.selector);
+        vm.expectRevert(CircleErrors.VaultAlreadyExists.selector);
         factory.deployVault(listingId, 0, 0);
     }
 
@@ -240,11 +240,11 @@ contract HLAgentVaultTest is Test {
         assertEq(other.equity(), 5_000 * UNIT);
 
         vm.prank(otherTrader);
-        vm.expectRevert(Errors.NotTrader.selector);
+        vm.expectRevert(CircleErrors.NotTrader.selector);
         vault.requestWithdraw(uint64(1 * UNIT));
 
         vm.prank(trader);
-        vm.expectRevert(Errors.NotTrader.selector);
+        vm.expectRevert(CircleErrors.NotTrader.selector);
         other.requestWithdraw(uint64(1 * UNIT));
 
         vm.prank(trader);
@@ -395,17 +395,17 @@ contract HLAgentVaultTest is Test {
 
     function test_onlyTheAgentCanPlaceOrders() public {
         vm.prank(attacker);
-        vm.expectRevert(Errors.NotAgentAuthority.selector);
+        vm.expectRevert(CircleErrors.NotAgentAuthority.selector);
         vault.placeOrder(BTC_PERP, true, 1e8, _size(1), false, 2, 1);
 
         vm.prank(trader);
-        vm.expectRevert(Errors.NotAgentAuthority.selector);
+        vm.expectRevert(CircleErrors.NotAgentAuthority.selector);
         vault.placeOrder(BTC_PERP, true, 1e8, _size(1), false, 2, 1);
     }
 
     function test_orderRefusedOnAnUnlistedAsset() public {
         vm.prank(agent);
-        vm.expectRevert(Errors.VenueNotWhitelisted.selector);
+        vm.expectRevert(CircleErrors.VenueNotWhitelisted.selector);
         vault.placeOrder(999, true, 1e8, _size(1), false, 2, 1);
     }
 
@@ -413,7 +413,7 @@ contract HLAgentVaultTest is Test {
         vm.prank(trader);
         vault.pause();
         vm.prank(agent);
-        vm.expectRevert(Errors.VaultNotActive.selector);
+        vm.expectRevert(CircleErrors.VaultNotActive.selector);
         vault.placeOrder(BTC_PERP, true, 1e8, _size(1), false, 2, 1);
 
         vm.prank(trader);
@@ -422,7 +422,7 @@ contract HLAgentVaultTest is Test {
         vm.prank(guardian);
         registry.suspendListing(listingId);
         vm.prank(agent);
-        vm.expectRevert(Errors.ListingNotLive.selector);
+        vm.expectRevert(CircleErrors.ListingNotLive.selector);
         vault.placeOrder(BTC_PERP, true, 1e8, _size(1), false, 2, 1);
     }
 
@@ -448,7 +448,7 @@ contract HLAgentVaultTest is Test {
         vault.placeOrder(BTC_PERP, true, 1e8, _size(500), false, 2, 2);
         assertEq(vault.reserved(), 1_000 * UNIT);
 
-        vm.expectRevert(Errors.PositionCapExceeded.selector);
+        vm.expectRevert(CircleErrors.PositionCapExceeded.selector);
         vault.placeOrder(BTC_PERP, true, 1e8, _size(500), false, 2, 3);
         vm.stopPrank();
     }
@@ -459,7 +459,7 @@ contract HLAgentVaultTest is Test {
         _setPosition(address(vault), BTC_PERP, _sziWorth(1_000));
 
         vm.prank(agent);
-        vm.expectRevert(Errors.PositionCapExceeded.selector);
+        vm.expectRevert(CircleErrors.PositionCapExceeded.selector);
         vault.placeOrder(BTC_PERP, true, 1e8, _size(500), false, 2, 1);
     }
 
@@ -468,7 +468,7 @@ contract HLAgentVaultTest is Test {
         for (uint128 i = 1; i <= Constants.MAX_OPEN_ORDERS; ++i) {
             vault.placeOrder(BTC_PERP, true, 1e8, _size(1), false, 2, i);
         }
-        vm.expectRevert(Errors.TooManyOpenOrders.selector);
+        vm.expectRevert(CircleErrors.TooManyOpenOrders.selector);
         vault.placeOrder(BTC_PERP, true, 1e8, _size(1), false, 2, 99);
         vm.stopPrank();
     }
@@ -476,16 +476,48 @@ contract HLAgentVaultTest is Test {
     function test_duplicateCloidIsRefused() public {
         vm.startPrank(agent);
         vault.placeOrder(BTC_PERP, true, 1e8, _size(1), false, 2, 7);
-        vm.expectRevert(Errors.OrderAlreadyExists.selector);
+        vm.expectRevert(CircleErrors.OrderAlreadyExists.selector);
         vault.placeOrder(BTC_PERP, true, 1e8, _size(1), false, 2, 7);
         vm.stopPrank();
+    }
+
+    /// Asset 0 is a real index - SOL on testnet, BTC on mainnet - and a reduce-only order
+    /// reserves nothing, so both the `asset` and `maxCost` of its `Reservation` are zero.
+    /// A duplicate check that reads those two fields cannot see such a reservation, which
+    /// made the same cloid bookable twice on exactly that combination: two `++openOrders`
+    /// against one cloid-keyed `_release`, and one of eight slots gone for the vault's
+    /// lifetime.
+    function test_duplicateCloidIsRefusedOnAssetZeroReduceOnly() public {
+        uint32 assetZero = 0;
+
+        vm.startPrank(governance);
+        whitelist.queueAddition(assetZero, 0);
+        vm.warp(block.timestamp + Constants.VENUE_TIMELOCK_DELAY);
+        whitelist.executeAddition(assetZero);
+        vm.stopPrank();
+        _setMark(assetZero, 1e4);
+
+        vm.startPrank(agent);
+        vault.placeOrder(assetZero, false, 1e8, _size(1), true, 2, 7);
+        assertEq(vault.openOrders(), 1);
+
+        vm.expectRevert(CircleErrors.OrderAlreadyExists.selector);
+        vault.placeOrder(assetZero, false, 1e8, _size(1), true, 2, 7);
+        vm.stopPrank();
+
+        assertEq(vault.openOrders(), 1, "a refused duplicate must not consume a slot");
+
+        // The slot comes back, which it cannot if the duplicate booked a second time.
+        vm.prank(agent);
+        vault.cancelOrder(7);
+        assertEq(vault.openOrders(), 0, "the slot is leaked");
     }
 
     /// A thin market's own cap binds even when the trader's is looser.
     function test_thinMarketCapBindsBeforeTheVaultCap() public {
         // 3% of 10,000 is 300: 500 is inside the vault's 12% and outside the asset's 3%.
         vm.prank(agent);
-        vm.expectRevert(Errors.PositionCapExceeded.selector);
+        vm.expectRevert(CircleErrors.PositionCapExceeded.selector);
         vault.placeOrder(THIN_PERP, true, 1e8, _size(500), false, 2, 1);
 
         vm.prank(agent);
@@ -588,14 +620,14 @@ contract HLAgentVaultTest is Test {
         assertGt(_coreWriter().actionCount(), before, "a reduce-only close was sent");
 
         vm.prank(agent);
-        vm.expectRevert(Errors.VaultNotActive.selector);
+        vm.expectRevert(CircleErrors.VaultNotActive.selector);
         vault.placeOrder(BTC_PERP, true, 1e8, _size(1), false, 2, 2);
     }
 
     function test_orderRefusedWhenAlreadyPastTheDrawdownLimit() public {
         _setEquity(address(vault), 8_400);
         vm.prank(agent);
-        vm.expectRevert(Errors.DrawdownLimitBreached.selector);
+        vm.expectRevert(CircleErrors.DrawdownLimitBreached.selector);
         vault.placeOrder(BTC_PERP, true, 1e8, _size(1), false, 2, 1);
     }
 
@@ -707,7 +739,7 @@ contract HLAgentVaultTest is Test {
 
     function test_onlyTraderOrAgentCanExit() public {
         vm.prank(attacker);
-        vm.expectRevert(Errors.NotTraderOrAgent.selector);
+        vm.expectRevert(CircleErrors.NotTraderOrAgent.selector);
         vault.exitPosition(BTC_PERP);
     }
 
@@ -718,7 +750,7 @@ contract HLAgentVaultTest is Test {
         assertEq(vault.availableToWithdraw(), 9_000 * UNIT);
 
         vm.prank(trader);
-        vm.expectRevert(Errors.InsufficientBalance.selector);
+        vm.expectRevert(CircleErrors.InsufficientBalance.selector);
         vault.requestWithdraw(uint64(10_000 * UNIT));
     }
 
@@ -743,7 +775,7 @@ contract HLAgentVaultTest is Test {
     // ─────────────────────────────────────── fees
 
     function test_performanceFeeIsRateLimited() public {
-        vm.expectRevert(Errors.FeeAssessmentTooSoon.selector);
+        vm.expectRevert(CircleErrors.FeeAssessmentTooSoon.selector);
         vault.assessFees();
     }
 
@@ -799,7 +831,7 @@ contract HLAgentVaultTest is Test {
 
     function test_onlyTraderCanEnableFastMode() public {
         vm.prank(agent);
-        vm.expectRevert(Errors.NotTrader.selector);
+        vm.expectRevert(CircleErrors.NotTrader.selector);
         vault.enableFastMode(agent);
     }
 
@@ -856,7 +888,7 @@ contract HLAgentVaultTest is Test {
 
     function test_disableFastModeWhenOffReverts() public {
         vm.prank(trader);
-        vm.expectRevert(Errors.AlreadySet.selector);
+        vm.expectRevert(CircleErrors.AlreadySet.selector);
         vault.disableFastMode();
     }
 
@@ -867,17 +899,17 @@ contract HLAgentVaultTest is Test {
         vault.tightenRiskLimits(600, 800);
         assertEq(vault.positionCapBps(), 600);
 
-        vm.expectRevert(Errors.RiskOverrideNotStricter.selector);
+        vm.expectRevert(CircleErrors.RiskOverrideNotStricter.selector);
         vault.tightenRiskLimits(700, 800);
 
-        vm.expectRevert(Errors.ZeroAmount.selector);
+        vm.expectRevert(CircleErrors.ZeroAmount.selector);
         vault.tightenRiskLimits(0, 800);
         vm.stopPrank();
     }
 
     function test_openingWithLooserLimitsThanTheListingIsRefused() public {
         vm.prank(otherTrader);
-        vm.expectRevert(Errors.RiskOverrideNotStricter.selector);
+        vm.expectRevert(CircleErrors.RiskOverrideNotStricter.selector);
         factory.deployVault(listingId, Constants.DEFAULT_POSITION_CAP_BPS + 1, 0);
     }
 
@@ -886,7 +918,7 @@ contract HLAgentVaultTest is Test {
         vault.tightenRiskLimits(300, 1_500); // 3% of 10,000 = 300
 
         vm.prank(agent);
-        vm.expectRevert(Errors.PositionCapExceeded.selector);
+        vm.expectRevert(CircleErrors.PositionCapExceeded.selector);
         vault.placeOrder(BTC_PERP, true, 1e8, _size(500), false, 2, 1);
     }
 
@@ -921,44 +953,44 @@ contract HLAgentVaultTest is Test {
     // guarding would leave every test above still green.
 
     function test_constructorRejectsZeroAddresses() public {
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         new HLAgentVault(
             address(0), address(registry), address(whitelist), treasury, builderFeeAccount, 0
         );
 
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         new HLAgentVault(
             address(usdc), address(0), address(whitelist), treasury, builderFeeAccount, 0
         );
 
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         new HLAgentVault(
             address(usdc), address(registry), address(0), treasury, builderFeeAccount, 0
         );
 
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         new HLAgentVault(
             address(usdc), address(registry), address(whitelist), address(0), builderFeeAccount, 0
         );
 
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         new HLAgentVault(
             address(usdc), address(registry), address(whitelist), treasury, address(0), 0
         );
     }
 
     function test_factoryRejectsAZeroImplementation() public {
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         new HLAgentVaultFactory(address(0));
     }
 
     function test_depositGuards() public {
         vm.startPrank(trader);
-        vm.expectRevert(Errors.ZeroAmount.selector);
+        vm.expectRevert(CircleErrors.ZeroAmount.selector);
         vault.deposit(0);
 
         vault.pause();
-        vm.expectRevert(Errors.VaultNotActive.selector);
+        vm.expectRevert(CircleErrors.VaultNotActive.selector);
         vault.deposit(uint64(1 * UNIT));
         vm.stopPrank();
     }
@@ -969,37 +1001,37 @@ contract HLAgentVaultTest is Test {
         vault.resume();
         usdc.mint(trader, 30_000 * UNIT);
         // Tier 1 ceiling is 25,000 and 10,000 is already in.
-        vm.expectRevert(Errors.AumCeilingExceeded.selector);
+        vm.expectRevert(CircleErrors.AumCeilingExceeded.selector);
         vault.deposit(uint64(20_000 * UNIT));
         vm.stopPrank();
     }
 
     function test_onlyTraderCanDepositOrWithdraw() public {
         vm.startPrank(attacker);
-        vm.expectRevert(Errors.NotTrader.selector);
+        vm.expectRevert(CircleErrors.NotTrader.selector);
         vault.deposit(uint64(1 * UNIT));
 
-        vm.expectRevert(Errors.NotTrader.selector);
+        vm.expectRevert(CircleErrors.NotTrader.selector);
         vault.requestWithdraw(uint64(1 * UNIT));
 
-        vm.expectRevert(Errors.NotTrader.selector);
+        vm.expectRevert(CircleErrors.NotTrader.selector);
         vault.pause();
 
-        vm.expectRevert(Errors.NotTrader.selector);
+        vm.expectRevert(CircleErrors.NotTrader.selector);
         vault.tightenRiskLimits(100, 100);
         vm.stopPrank();
     }
 
     function test_orderRejectsZeroSizePriceAndCloid() public {
         vm.startPrank(agent);
-        vm.expectRevert(Errors.ZeroAmount.selector);
+        vm.expectRevert(CircleErrors.ZeroAmount.selector);
         vault.placeOrder(BTC_PERP, true, 1e8, 0, false, 2, 1);
 
-        vm.expectRevert(Errors.ZeroAmount.selector);
+        vm.expectRevert(CircleErrors.ZeroAmount.selector);
         vault.placeOrder(BTC_PERP, true, 0, _size(1), false, 2, 1);
 
         // A zero cloid cannot be cancelled by cloid, so it cannot be accepted.
-        vm.expectRevert(Errors.ZeroAmount.selector);
+        vm.expectRevert(CircleErrors.ZeroAmount.selector);
         vault.placeOrder(BTC_PERP, true, 1e8, _size(1), false, 2, 0);
         vm.stopPrank();
     }
@@ -1008,13 +1040,13 @@ contract HLAgentVaultTest is Test {
     /// zero: a reservation of zero is an order the cap cannot see.
     function test_orderRoundingToZeroNotionalIsRefused() public {
         vm.prank(agent);
-        vm.expectRevert(Errors.ZeroAmount.selector);
+        vm.expectRevert(CircleErrors.ZeroAmount.selector);
         vault.placeOrder(BTC_PERP, true, 1, 1, false, 2, 1);
     }
 
     function test_cancelGuards() public {
         vm.prank(trader);
-        vm.expectRevert(Errors.OrderNotFound.selector);
+        vm.expectRevert(CircleErrors.OrderNotFound.selector);
         vault.cancelOrder(42);
 
         vm.prank(agent);
@@ -1025,7 +1057,7 @@ contract HLAgentVaultTest is Test {
 
         // Cancelling twice is refused rather than double-releasing the reservation.
         vm.prank(trader);
-        vm.expectRevert(Errors.OrderNotFound.selector);
+        vm.expectRevert(CircleErrors.OrderNotFound.selector);
         vault.cancelOrder(1);
     }
 
@@ -1034,7 +1066,7 @@ contract HLAgentVaultTest is Test {
         vault.placeOrder(BTC_PERP, true, 1e8, _size(1), false, 2, 1);
 
         vm.prank(attacker);
-        vm.expectRevert(Errors.NotTraderOrAgent.selector);
+        vm.expectRevert(CircleErrors.NotTraderOrAgent.selector);
         vault.cancelOrder(1);
     }
 
@@ -1071,16 +1103,16 @@ contract HLAgentVaultTest is Test {
 
     function test_requestWithdrawRejectsZeroAndOverdraw() public {
         vm.startPrank(trader);
-        vm.expectRevert(Errors.ZeroAmount.selector);
+        vm.expectRevert(CircleErrors.ZeroAmount.selector);
         vault.requestWithdraw(0);
 
-        vm.expectRevert(Errors.InsufficientBalance.selector);
+        vm.expectRevert(CircleErrors.InsufficientBalance.selector);
         vault.requestWithdraw(uint64(10_001 * UNIT));
         vm.stopPrank();
     }
 
     function test_finalizeWithNothingToPayReverts() public {
-        vm.expectRevert(Errors.InsufficientBalance.selector);
+        vm.expectRevert(CircleErrors.InsufficientBalance.selector);
         vault.finalizeWithdraw();
     }
 
@@ -1088,7 +1120,7 @@ contract HLAgentVaultTest is Test {
     /// money the protocol has no record of owing, so it refuses rather than guesses.
     function test_finalizeWithoutARequestReverts() public {
         usdc.mint(address(vault), 100 * UNIT);
-        vm.expectRevert(Errors.ZeroAmount.selector);
+        vm.expectRevert(CircleErrors.ZeroAmount.selector);
         vault.finalizeWithdraw();
     }
 
@@ -1192,7 +1224,7 @@ contract HLAgentVaultTest is Test {
     function test_fastModeRefusedWhilePausedOrSuspended() public {
         vm.startPrank(trader);
         vault.pause();
-        vm.expectRevert(Errors.VaultNotActive.selector);
+        vm.expectRevert(CircleErrors.VaultNotActive.selector);
         vault.enableFastMode(agent);
         vault.resume();
         vm.stopPrank();
@@ -1200,13 +1232,13 @@ contract HLAgentVaultTest is Test {
         vm.prank(guardian);
         registry.suspendListing(listingId);
         vm.prank(trader);
-        vm.expectRevert(Errors.ListingNotLive.selector);
+        vm.expectRevert(CircleErrors.ListingNotLive.selector);
         vault.enableFastMode(agent);
     }
 
     function test_fastModeRejectsAZeroApiWallet() public {
         vm.prank(trader);
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         vault.enableFastMode(address(0));
     }
 
@@ -1215,7 +1247,7 @@ contract HLAgentVaultTest is Test {
         vault.enableFastMode(agent);
 
         vm.prank(attacker);
-        vm.expectRevert(Errors.NotTraderOrAgent.selector);
+        vm.expectRevert(CircleErrors.NotTraderOrAgent.selector);
         vault.disableFastMode();
     }
 }

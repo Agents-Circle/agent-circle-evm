@@ -6,7 +6,7 @@ import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.s
 import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import { IAgentRegistry } from "./interfaces/IAgentRegistry.sol";
-import { Errors } from "./libraries/Errors.sol";
+import { CircleErrors } from "./libraries/CircleErrors.sol";
 import { Constants } from "./libraries/Constants.sol";
 
 /// Builder identity, agent listings, and the staked bonds that back them.
@@ -62,12 +62,12 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
     event AgentBondDiscountSet(uint16 discountBps);
 
     modifier onlyGovernance() {
-        if (msg.sender != governance) revert Errors.NotGovernance();
+        if (msg.sender != governance) revert CircleErrors.NotGovernance();
         _;
     }
 
     modifier onlyGovernanceOrGuardian() {
-        if (msg.sender != governance && msg.sender != guardian) revert Errors.NotGuardian();
+        if (msg.sender != governance && msg.sender != guardian) revert CircleErrors.NotGuardian();
         _;
     }
 
@@ -80,9 +80,11 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
         uint64 unbondPeriod_
     ) {
         if (governance_ == address(0) || guardian_ == address(0) || bondToken_ == address(0)) {
-            revert Errors.ZeroAddress();
+            revert CircleErrors.ZeroAddress();
         }
-        if (unbondPeriod_ > Constants.MAX_UNBOND_PERIOD) revert Errors.ParameterOutOfBounds();
+        if (unbondPeriod_ > Constants.MAX_UNBOND_PERIOD) {
+            revert CircleErrors.ParameterOutOfBounds();
+        }
 
         governance = governance_;
         guardian = guardian_;
@@ -96,7 +98,7 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
 
     function registerBuilder() external {
         Builder storage b = _builders[msg.sender];
-        if (b.exists) revert Errors.BuilderAlreadyRegistered();
+        if (b.exists) revert CircleErrors.BuilderAlreadyRegistered();
 
         b.exists = true;
         b.createdAt = uint64(block.timestamp);
@@ -104,9 +106,9 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
     }
 
     function stakeBond(uint256 amount) external nonReentrant {
-        if (amount == 0) revert Errors.ZeroAmount();
+        if (amount == 0) revert CircleErrors.ZeroAmount();
         Builder storage b = _builders[msg.sender];
-        if (!b.exists) revert Errors.BuilderNotRegistered();
+        if (!b.exists) revert CircleErrors.BuilderNotRegistered();
 
         bondToken.safeTransferFrom(msg.sender, address(this), amount);
         b.bondAmount += amount;
@@ -120,9 +122,9 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
     /// disappears, and so misconduct discovered late still has something to slash.
     function requestUnbond(uint256 amount) external {
         Builder storage b = _builders[msg.sender];
-        if (!b.exists) revert Errors.BuilderNotRegistered();
-        if (amount == 0) revert Errors.ZeroAmount();
-        if (amount > b.bondAmount) revert Errors.UnbondAmountExceedsBond();
+        if (!b.exists) revert CircleErrors.BuilderNotRegistered();
+        if (amount == 0) revert CircleErrors.ZeroAmount();
+        if (amount > b.bondAmount) revert CircleErrors.UnbondAmountExceedsBond();
 
         b.unbondAmount = amount;
         b.unbondRequestedAt = uint64(block.timestamp);
@@ -132,9 +134,9 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
 
     function withdrawBond() external nonReentrant {
         Builder storage b = _builders[msg.sender];
-        if (b.unbondRequestedAt == 0) revert Errors.NoUnbondRequested();
+        if (b.unbondRequestedAt == 0) revert CircleErrors.NoUnbondRequested();
         if (block.timestamp < b.unbondRequestedAt + unbondPeriod) {
-            revert Errors.UnbondPeriodNotElapsed();
+            revert CircleErrors.UnbondPeriodNotElapsed();
         }
 
         uint256 amount = b.unbondAmount;
@@ -143,7 +145,9 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
         // The bond must still cover capital under management after the withdrawal.
         // Traders exit first, then the builder unwinds — not the other way round.
         uint256 remaining = b.bondAmount - amount;
-        if (_ceilingFor(_tierFor(remaining)) < b.totalAum) revert Errors.BondBelowAumCoverage();
+        if (_ceilingFor(_tierFor(remaining)) < b.totalAum) {
+            revert CircleErrors.BondBelowAumCoverage();
+        }
 
         b.bondAmount = remaining;
         b.tier = _tierFor(remaining);
@@ -165,9 +169,9 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
         nonReentrant
     {
         Builder storage b = _builders[builder];
-        if (!b.exists) revert Errors.BuilderNotRegistered();
-        if (amount > b.bondAmount) revert Errors.UnbondAmountExceedsBond();
-        if (traderRecipient == address(0)) revert Errors.ZeroAddress();
+        if (!b.exists) revert CircleErrors.BuilderNotRegistered();
+        if (amount > b.bondAmount) revert CircleErrors.UnbondAmountExceedsBond();
+        if (traderRecipient == address(0)) revert CircleErrors.ZeroAddress();
 
         b.bondAmount -= amount;
         b.tier = _tierFor(b.bondAmount);
@@ -193,8 +197,8 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
         returns (bytes32 id)
     {
         Builder storage b = _builders[msg.sender];
-        if (!b.exists) revert Errors.BuilderNotRegistered();
-        if (agentAuthority == address(0)) revert Errors.ZeroAddress();
+        if (!b.exists) revert CircleErrors.BuilderNotRegistered();
+        if (agentAuthority == address(0)) revert CircleErrors.ZeroAddress();
 
         id = listingId(msg.sender, b.agentCount);
         b.agentCount += 1;
@@ -237,7 +241,7 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
 
     function _approveListing(bytes32 id, Terms memory t) internal {
         Listing storage l = _listings[id];
-        if (l.status != ListingStatus.Vetting) revert Errors.ListingNotVetting();
+        if (l.status != ListingStatus.Vetting) revert CircleErrors.ListingNotVetting();
 
         // Every bound here is one a fully compromised multisig still cannot cross. The
         // execution-fee pair is bounded in both directions for the same reason the
@@ -258,7 +262,7 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
                 || t.executionBuilderSplitBps > Constants.BPS || t.positionCapBps == 0
                 || t.positionCapBps > Constants.MAX_POSITION_CAP_BPS || t.maxDrawdownBps == 0
                 || t.maxDrawdownBps > Constants.MAX_DRAWDOWN_BPS_CEILING
-        ) revert Errors.ParameterOutOfBounds();
+        ) revert CircleErrors.ParameterOutOfBounds();
 
         l.performanceFeeBps = t.performanceFeeBps;
         l.builderSplitBps = t.builderSplitBps;
@@ -273,7 +277,7 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
 
     function rejectListing(bytes32 id) external onlyGovernance {
         Listing storage l = _listings[id];
-        if (l.status != ListingStatus.Vetting) revert Errors.ListingNotVetting();
+        if (l.status != ListingStatus.Vetting) revert CircleErrors.ListingNotVetting();
         l.status = ListingStatus.Rejected;
         emit ListingRejected(id);
     }
@@ -282,7 +286,7 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
     /// touch trader funds, which remain withdrawable by their owners throughout.
     function suspendListing(bytes32 id) external onlyGovernanceOrGuardian {
         Listing storage l = _listings[id];
-        if (l.status == ListingStatus.None) revert Errors.ListingNotFound();
+        if (l.status == ListingStatus.None) revert CircleErrors.ListingNotFound();
         l.status = ListingStatus.Suspended;
         emit ListingSuspended(id, msg.sender);
     }
@@ -290,8 +294,8 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
     /// A builder rotating a compromised agent key must not have to re-run vetting.
     function setAgentAuthority(bytes32 id, address next) external {
         Listing storage l = _listings[id];
-        if (l.builder != msg.sender) revert Errors.NotBuilder();
-        if (next == address(0)) revert Errors.ZeroAddress();
+        if (l.builder != msg.sender) revert CircleErrors.NotBuilder();
+        if (next == address(0)) revert CircleErrors.ZeroAddress();
         l.agentAuthority = next;
         emit AgentAuthorityChanged(id, next);
     }
@@ -299,14 +303,14 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
     // ────────────────────────────────────────────────────────── AUM
 
     function notifyAumDelta(bytes32 id, int256 delta) external {
-        if (!_isAuthorisedVault(msg.sender)) revert Errors.NotVault();
+        if (!_isAuthorisedVault(msg.sender)) revert CircleErrors.NotVault();
         Listing storage l = _listings[id];
-        if (l.status == ListingStatus.None) revert Errors.ListingNotFound();
+        if (l.status == ListingStatus.None) revert CircleErrors.ListingNotFound();
 
         Builder storage b = _builders[l.builder];
         if (delta >= 0) {
             uint256 add = uint256(delta);
-            if (b.totalAum + add > _ceilingFor(b.tier)) revert Errors.AumCeilingExceeded();
+            if (b.totalAum + add > _ceilingFor(b.tier)) revert CircleErrors.AumCeilingExceeded();
             b.totalAum += add;
         } else {
             uint256 sub = uint256(-delta);
@@ -329,8 +333,8 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
     /// it re-settable would let a compromised governance key point the registry at a
     /// contract that mints headroom out of nothing.
     function setVault(address vault_) external onlyGovernance {
-        if (vault != address(0)) revert Errors.AlreadySet();
-        if (vault_ == address(0)) revert Errors.ZeroAddress();
+        if (vault != address(0)) revert CircleErrors.AlreadySet();
+        if (vault_ == address(0)) revert CircleErrors.ZeroAddress();
         vault = vault_;
         emit VaultSet(vault_);
     }
@@ -347,8 +351,8 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
     /// registry deployment serves one chain. Leaving `vault` unset on HyperEVM and
     /// `vaultFactory` unset on Polygon is the expected configuration, not an oversight.
     function setVaultFactory(address factory_) external onlyGovernance {
-        if (vaultFactory != address(0)) revert Errors.AlreadySet();
-        if (factory_ == address(0)) revert Errors.ZeroAddress();
+        if (vaultFactory != address(0)) revert CircleErrors.AlreadySet();
+        if (factory_ == address(0)) revert CircleErrors.ZeroAddress();
         vaultFactory = factory_;
         emit VaultFactorySet(factory_);
     }
@@ -370,7 +374,7 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
     }
 
     function setGuardian(address next) external onlyGovernance {
-        if (next == address(0)) revert Errors.ZeroAddress();
+        if (next == address(0)) revert CircleErrors.ZeroAddress();
         emit GuardianChanged(guardian, next);
         guardian = next;
     }
@@ -394,7 +398,7 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
     /// their live AUM. The discount lowers what that tier costs, not what it covers.
     function setAgentBondDiscount(uint16 discountBps) external onlyGovernance {
         if (discountBps > Constants.MAX_AGENT_BOND_DISCOUNT_BPS) {
-            revert Errors.ParameterOutOfBounds();
+            revert CircleErrors.ParameterOutOfBounds();
         }
         agentBondDiscountBps = discountBps;
         emit AgentBondDiscountSet(discountBps);

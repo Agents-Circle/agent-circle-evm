@@ -4,7 +4,7 @@ pragma solidity 0.8.24;
 import { Clones } from "@openzeppelin/contracts/proxy/Clones.sol";
 
 import { HLAgentVault } from "./HLAgentVault.sol";
-import { Errors } from "../libraries/Errors.sol";
+import { CircleErrors } from "../libraries/CircleErrors.sol";
 
 /// Deploys one `HLAgentVault` clone per `(trader, listing)` and vouches for its children.
 ///
@@ -37,7 +37,7 @@ contract HLAgentVaultFactory {
     event VaultDeployed(address indexed vault, address indexed trader, bytes32 indexed listingId);
 
     constructor(address implementation_) {
-        if (implementation_ == address(0)) revert Errors.ZeroAddress();
+        if (implementation_ == address(0)) revert CircleErrors.ZeroAddress();
         implementation = implementation_;
     }
 
@@ -59,7 +59,7 @@ contract HLAgentVaultFactory {
         returns (address vault)
     {
         bytes32 id = vaultId(msg.sender, listingId);
-        if (vaultFor[id] != address(0)) revert Errors.VaultAlreadyExists();
+        if (vaultFor[id] != address(0)) revert CircleErrors.VaultAlreadyExists();
 
         // Deployed and registered *before* initialising, because `initialize` reads the
         // registry and a future registry read could call back here. Writing provenance

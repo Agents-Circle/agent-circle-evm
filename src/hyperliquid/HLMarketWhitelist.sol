@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.24;
 
-import { Errors } from "../libraries/Errors.sol";
+import { CircleErrors } from "../libraries/CircleErrors.sol";
 import { Constants } from "../libraries/Constants.sol";
 
 /// The set of HyperCore assets vaults are permitted to trade.
@@ -62,18 +62,20 @@ contract HLMarketWhitelist {
     event GuardianChanged(address indexed previous, address indexed next);
 
     modifier onlyGovernance() {
-        if (msg.sender != governance) revert Errors.NotGovernance();
+        if (msg.sender != governance) revert CircleErrors.NotGovernance();
         _;
     }
 
     /// Governance is the normal path for removal; the guardian is the 3am path.
     modifier onlyGovernanceOrGuardian() {
-        if (msg.sender != governance && msg.sender != guardian) revert Errors.NotGuardian();
+        if (msg.sender != governance && msg.sender != guardian) revert CircleErrors.NotGuardian();
         _;
     }
 
     constructor(address governance_, address guardian_, uint64 delay_) {
-        if (governance_ == address(0) || guardian_ == address(0)) revert Errors.ZeroAddress();
+        if (governance_ == address(0) || guardian_ == address(0)) {
+            revert CircleErrors.ZeroAddress();
+        }
         governance = governance_;
         guardian = guardian_;
         delay = delay_;
@@ -82,7 +84,9 @@ contract HLMarketWhitelist {
     // ────────────────────────────────────────────────────────── additions
 
     function queueAddition(uint32 asset, uint16 positionCapBps) external onlyGovernance {
-        if (positionCapBps > Constants.MAX_POSITION_CAP_BPS) revert Errors.ParameterOutOfBounds();
+        if (positionCapBps > Constants.MAX_POSITION_CAP_BPS) {
+            revert CircleErrors.ParameterOutOfBounds();
+        }
 
         uint64 eta = uint64(block.timestamp) + delay;
         queued[asset] =
@@ -92,9 +96,9 @@ contract HLMarketWhitelist {
 
     function executeAddition(uint32 asset) external onlyGovernance {
         Queued memory q = queued[asset];
-        if (!q.exists) revert Errors.TimelockNotQueued();
-        if (q.vetoed) revert Errors.ProposalVetoed();
-        if (block.timestamp < q.eta) revert Errors.TimelockNotElapsed();
+        if (!q.exists) revert CircleErrors.TimelockNotQueued();
+        if (q.vetoed) revert CircleErrors.ProposalVetoed();
+        if (block.timestamp < q.eta) revert CircleErrors.TimelockNotElapsed();
 
         delete queued[asset];
         markets[asset] = Market({ positionCapBps: q.positionCapBps, listed: true });
@@ -102,7 +106,7 @@ contract HLMarketWhitelist {
     }
 
     function vetoAddition(uint32 asset) external onlyGovernanceOrGuardian {
-        if (!queued[asset].exists) revert Errors.TimelockNotQueued();
+        if (!queued[asset].exists) revert CircleErrors.TimelockNotQueued();
         queued[asset].vetoed = true;
         emit AdditionVetoed(asset, msg.sender);
     }
@@ -128,14 +132,18 @@ contract HLMarketWhitelist {
         onlyGovernanceOrGuardian
     {
         Market storage m = markets[asset];
-        if (!m.listed) revert Errors.VenueNotWhitelisted();
-        if (positionCapBps == 0) revert Errors.ZeroAmount();
+        if (!m.listed) revert CircleErrors.VenueNotWhitelisted();
+        if (positionCapBps == 0) revert CircleErrors.ZeroAmount();
 
         uint16 current = m.positionCapBps;
         // An uncapped market (zero) may be given any valid cap; a capped one may only go
         // down. Both are a reduction in what the vault is permitted to do.
-        if (current != 0 && positionCapBps >= current) revert Errors.RiskOverrideNotStricter();
-        if (positionCapBps > Constants.MAX_POSITION_CAP_BPS) revert Errors.ParameterOutOfBounds();
+        if (current != 0 && positionCapBps >= current) {
+            revert CircleErrors.RiskOverrideNotStricter();
+        }
+        if (positionCapBps > Constants.MAX_POSITION_CAP_BPS) {
+            revert CircleErrors.ParameterOutOfBounds();
+        }
 
         m.positionCapBps = positionCapBps;
         emit MarketCapTightened(asset, positionCapBps);
@@ -144,7 +152,7 @@ contract HLMarketWhitelist {
     /// Deliberately immediate: a suspected-compromised guardian needs replacing faster
     /// than a timelock allows.
     function setGuardian(address next) external onlyGovernance {
-        if (next == address(0)) revert Errors.ZeroAddress();
+        if (next == address(0)) revert CircleErrors.ZeroAddress();
         emit GuardianChanged(guardian, next);
         guardian = next;
     }

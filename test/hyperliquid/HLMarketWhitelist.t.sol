@@ -4,7 +4,7 @@ pragma solidity 0.8.24;
 import { Test } from "forge-std/Test.sol";
 
 import { HLMarketWhitelist } from "../../src/hyperliquid/HLMarketWhitelist.sol";
-import { Errors } from "../../src/libraries/Errors.sol";
+import { CircleErrors } from "../../src/libraries/CircleErrors.sol";
 import { Constants } from "../../src/libraries/Constants.sol";
 
 /// The Drift lesson, encoded again — plus the part `VenueWhitelist` does not have.
@@ -42,10 +42,10 @@ contract HLMarketWhitelistTest is Test {
     // ───────────────────────────────────────── construction
 
     function test_constructorRejectsZeroAddresses() public {
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         new HLMarketWhitelist(address(0), guardian, DELAY);
 
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         new HLMarketWhitelist(governance, address(0), DELAY);
     }
 
@@ -54,7 +54,7 @@ contract HLMarketWhitelistTest is Test {
     function test_additionCannotSkipTheTimelock() public {
         vm.startPrank(governance);
         wl.queueAddition(BTC, 0);
-        vm.expectRevert(Errors.TimelockNotElapsed.selector);
+        vm.expectRevert(CircleErrors.TimelockNotElapsed.selector);
         wl.executeAddition(BTC);
         vm.stopPrank();
 
@@ -68,7 +68,7 @@ contract HLMarketWhitelistTest is Test {
 
     function test_executeRequiresAQueuedProposal() public {
         vm.prank(governance);
-        vm.expectRevert(Errors.TimelockNotQueued.selector);
+        vm.expectRevert(CircleErrors.TimelockNotQueued.selector);
         wl.executeAddition(BTC);
     }
 
@@ -89,7 +89,7 @@ contract HLMarketWhitelistTest is Test {
 
     function test_queuedCapIsBoundedByTheProtocolMaximum() public {
         vm.prank(governance);
-        vm.expectRevert(Errors.ParameterOutOfBounds.selector);
+        vm.expectRevert(CircleErrors.ParameterOutOfBounds.selector);
         wl.queueAddition(BTC, Constants.MAX_POSITION_CAP_BPS + 1);
     }
 
@@ -105,7 +105,7 @@ contract HLMarketWhitelistTest is Test {
 
         vm.warp(block.timestamp + DELAY + 1);
         vm.prank(governance);
-        vm.expectRevert(Errors.ProposalVetoed.selector);
+        vm.expectRevert(CircleErrors.ProposalVetoed.selector);
         wl.executeAddition(BTC);
 
         assertFalse(wl.isListed(BTC));
@@ -116,14 +116,14 @@ contract HLMarketWhitelistTest is Test {
         wl.queueAddition(BTC, 0);
         wl.vetoAddition(BTC);
         vm.warp(block.timestamp + DELAY + 1);
-        vm.expectRevert(Errors.ProposalVetoed.selector);
+        vm.expectRevert(CircleErrors.ProposalVetoed.selector);
         wl.executeAddition(BTC);
         vm.stopPrank();
     }
 
     function test_cannotVetoSomethingNeverQueued() public {
         vm.prank(guardian);
-        vm.expectRevert(Errors.TimelockNotQueued.selector);
+        vm.expectRevert(CircleErrors.TimelockNotQueued.selector);
         wl.vetoAddition(BTC);
     }
 
@@ -131,29 +131,29 @@ contract HLMarketWhitelistTest is Test {
 
     function test_theGuardianCanNeverAdd() public {
         vm.startPrank(guardian);
-        vm.expectRevert(Errors.NotGovernance.selector);
+        vm.expectRevert(CircleErrors.NotGovernance.selector);
         wl.queueAddition(BTC, 0);
 
-        vm.expectRevert(Errors.NotGovernance.selector);
+        vm.expectRevert(CircleErrors.NotGovernance.selector);
         wl.executeAddition(BTC);
         vm.stopPrank();
     }
 
     function test_attackerCanDoNothing() public {
         vm.startPrank(attacker);
-        vm.expectRevert(Errors.NotGovernance.selector);
+        vm.expectRevert(CircleErrors.NotGovernance.selector);
         wl.queueAddition(BTC, 0);
 
-        vm.expectRevert(Errors.NotGuardian.selector);
+        vm.expectRevert(CircleErrors.NotGuardian.selector);
         wl.removeMarket(BTC);
 
-        vm.expectRevert(Errors.NotGuardian.selector);
+        vm.expectRevert(CircleErrors.NotGuardian.selector);
         wl.vetoAddition(BTC);
 
-        vm.expectRevert(Errors.NotGuardian.selector);
+        vm.expectRevert(CircleErrors.NotGuardian.selector);
         wl.tightenMarketCap(BTC, 100);
 
-        vm.expectRevert(Errors.NotGovernance.selector);
+        vm.expectRevert(CircleErrors.NotGovernance.selector);
         wl.setGuardian(attacker);
         vm.stopPrank();
     }
@@ -179,7 +179,7 @@ contract HLMarketWhitelistTest is Test {
         // silently listing a market the guardian just rejected.
         vm.warp(block.timestamp + DELAY + 1);
         vm.prank(governance);
-        vm.expectRevert(Errors.TimelockNotQueued.selector);
+        vm.expectRevert(CircleErrors.TimelockNotQueued.selector);
         wl.executeAddition(THIN);
     }
 
@@ -224,7 +224,7 @@ contract HLMarketWhitelistTest is Test {
 
     function test_tighteningRequiresAListedMarket() public {
         vm.prank(governance);
-        vm.expectRevert(Errors.VenueNotWhitelisted.selector);
+        vm.expectRevert(CircleErrors.VenueNotWhitelisted.selector);
         wl.tightenMarketCap(BTC, 100);
     }
 
@@ -236,7 +236,7 @@ contract HLMarketWhitelistTest is Test {
     function test_tighteningToZeroIsRefused() public {
         _list(THIN, 300);
         vm.prank(guardian);
-        vm.expectRevert(Errors.ZeroAmount.selector);
+        vm.expectRevert(CircleErrors.ZeroAmount.selector);
         wl.tightenMarketCap(THIN, 0);
     }
 
@@ -248,10 +248,10 @@ contract HLMarketWhitelistTest is Test {
         assertEq(wl.effectiveCapBps(THIN, 1_200), 200);
 
         // Equal is not tighter.
-        vm.expectRevert(Errors.RiskOverrideNotStricter.selector);
+        vm.expectRevert(CircleErrors.RiskOverrideNotStricter.selector);
         wl.tightenMarketCap(THIN, 200);
 
-        vm.expectRevert(Errors.RiskOverrideNotStricter.selector);
+        vm.expectRevert(CircleErrors.RiskOverrideNotStricter.selector);
         wl.tightenMarketCap(THIN, 300);
         vm.stopPrank();
     }
@@ -270,7 +270,7 @@ contract HLMarketWhitelistTest is Test {
     function test_tighteningIsStillBoundedByTheProtocolMaximum() public {
         _list(BTC, 0);
         vm.prank(guardian);
-        vm.expectRevert(Errors.ParameterOutOfBounds.selector);
+        vm.expectRevert(CircleErrors.ParameterOutOfBounds.selector);
         wl.tightenMarketCap(BTC, Constants.MAX_POSITION_CAP_BPS + 1);
     }
 
@@ -289,7 +289,7 @@ contract HLMarketWhitelistTest is Test {
         // takes the delay.
         vm.startPrank(governance);
         wl.queueAddition(THIN, 500);
-        vm.expectRevert(Errors.TimelockNotElapsed.selector);
+        vm.expectRevert(CircleErrors.TimelockNotElapsed.selector);
         wl.executeAddition(THIN);
 
         vm.warp(block.timestamp + DELAY);
@@ -317,13 +317,13 @@ contract HLMarketWhitelistTest is Test {
 
         // And the old one is powerless at once.
         vm.prank(guardian);
-        vm.expectRevert(Errors.NotGuardian.selector);
+        vm.expectRevert(CircleErrors.NotGuardian.selector);
         wl.removeMarket(BTC);
     }
 
     function test_guardianRotationRejectsZero() public {
         vm.prank(governance);
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         wl.setGuardian(address(0));
     }
 
