@@ -82,7 +82,9 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
         if (governance_ == address(0) || guardian_ == address(0) || bondToken_ == address(0)) {
             revert CircleErrors.ZeroAddress();
         }
-        if (unbondPeriod_ > Constants.MAX_UNBOND_PERIOD) revert CircleErrors.ParameterOutOfBounds();
+        if (unbondPeriod_ > Constants.MAX_UNBOND_PERIOD) {
+            revert CircleErrors.ParameterOutOfBounds();
+        }
 
         governance = governance_;
         guardian = guardian_;
@@ -143,7 +145,9 @@ contract AgentRegistry is IAgentRegistry, ReentrancyGuard {
         // The bond must still cover capital under management after the withdrawal.
         // Traders exit first, then the builder unwinds — not the other way round.
         uint256 remaining = b.bondAmount - amount;
-        if (_ceilingFor(_tierFor(remaining)) < b.totalAum) revert CircleErrors.BondBelowAumCoverage();
+        if (_ceilingFor(_tierFor(remaining)) < b.totalAum) {
+            revert CircleErrors.BondBelowAumCoverage();
+        }
 
         b.bondAmount = remaining;
         b.tier = _tierFor(remaining);

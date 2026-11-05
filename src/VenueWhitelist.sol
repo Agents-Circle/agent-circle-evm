@@ -49,7 +49,9 @@ contract VenueWhitelist {
     }
 
     constructor(address governance_, address guardian_, uint64 delay_) {
-        if (governance_ == address(0) || guardian_ == address(0)) revert CircleErrors.ZeroAddress();
+        if (governance_ == address(0) || guardian_ == address(0)) {
+            revert CircleErrors.ZeroAddress();
+        }
         governance = governance_;
         guardian = guardian_;
         delay = delay_;

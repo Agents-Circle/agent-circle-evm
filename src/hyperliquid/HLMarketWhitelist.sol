@@ -73,7 +73,9 @@ contract HLMarketWhitelist {
     }
 
     constructor(address governance_, address guardian_, uint64 delay_) {
-        if (governance_ == address(0) || guardian_ == address(0)) revert CircleErrors.ZeroAddress();
+        if (governance_ == address(0) || guardian_ == address(0)) {
+            revert CircleErrors.ZeroAddress();
+        }
         governance = governance_;
         guardian = guardian_;
         delay = delay_;
@@ -82,7 +84,9 @@ contract HLMarketWhitelist {
     // ────────────────────────────────────────────────────────── additions
 
     function queueAddition(uint32 asset, uint16 positionCapBps) external onlyGovernance {
-        if (positionCapBps > Constants.MAX_POSITION_CAP_BPS) revert CircleErrors.ParameterOutOfBounds();
+        if (positionCapBps > Constants.MAX_POSITION_CAP_BPS) {
+            revert CircleErrors.ParameterOutOfBounds();
+        }
 
         uint64 eta = uint64(block.timestamp) + delay;
         queued[asset] =
@@ -134,8 +138,12 @@ contract HLMarketWhitelist {
         uint16 current = m.positionCapBps;
         // An uncapped market (zero) may be given any valid cap; a capped one may only go
         // down. Both are a reduction in what the vault is permitted to do.
-        if (current != 0 && positionCapBps >= current) revert CircleErrors.RiskOverrideNotStricter();
-        if (positionCapBps > Constants.MAX_POSITION_CAP_BPS) revert CircleErrors.ParameterOutOfBounds();
+        if (current != 0 && positionCapBps >= current) {
+            revert CircleErrors.RiskOverrideNotStricter();
+        }
+        if (positionCapBps > Constants.MAX_POSITION_CAP_BPS) {
+            revert CircleErrors.ParameterOutOfBounds();
+        }
 
         m.positionCapBps = positionCapBps;
         emit MarketCapTightened(asset, positionCapBps);
