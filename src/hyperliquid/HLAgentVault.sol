@@ -351,9 +351,13 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
         }
         if (sz == 0 || limitPx == 0) revert CircleErrors.ZeroAmount();
         if (cloid == 0) revert CircleErrors.ZeroAmount();
-        if (reservations[cloid].asset != 0 || reservations[cloid].maxCost != 0) {
-            revert CircleErrors.OrderAlreadyExists();
-        }
+        // `expiry` is the existence marker, because it is the one field every path sets
+        // to something non-zero and no path clears: `asset` is zero for asset index 0 and
+        // `maxCost` is zero for a reduce-only order, so a reduce-only order on asset 0
+        // reads as absent on both. `_release` only sets `released`, so a used cloid stays
+        // used for the vault's lifetime - which is what we want, since CoreWriter gives us
+        // no way to tell a reused cloid's fills apart.
+        if (reservations[cloid].expiry != 0) revert CircleErrors.OrderAlreadyExists();
         if (!whitelist.isListed(asset)) revert CircleErrors.VenueNotWhitelisted();
         if (openOrders >= Constants.MAX_OPEN_ORDERS) revert CircleErrors.TooManyOpenOrders();
 

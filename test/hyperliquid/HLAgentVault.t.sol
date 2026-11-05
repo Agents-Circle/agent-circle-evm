@@ -481,6 +481,38 @@ contract HLAgentVaultTest is Test {
         vm.stopPrank();
     }
 
+    /// Asset 0 is a real index - SOL on testnet, BTC on mainnet - and a reduce-only order
+    /// reserves nothing, so both the `asset` and `maxCost` of its `Reservation` are zero.
+    /// A duplicate check that reads those two fields cannot see such a reservation, which
+    /// made the same cloid bookable twice on exactly that combination: two `++openOrders`
+    /// against one cloid-keyed `_release`, and one of eight slots gone for the vault's
+    /// lifetime.
+    function test_duplicateCloidIsRefusedOnAssetZeroReduceOnly() public {
+        uint32 assetZero = 0;
+
+        vm.startPrank(governance);
+        whitelist.queueAddition(assetZero, 0);
+        vm.warp(block.timestamp + Constants.VENUE_TIMELOCK_DELAY);
+        whitelist.executeAddition(assetZero);
+        vm.stopPrank();
+        _setMark(assetZero, 1e4);
+
+        vm.startPrank(agent);
+        vault.placeOrder(assetZero, false, 1e8, _size(1), true, 2, 7);
+        assertEq(vault.openOrders(), 1);
+
+        vm.expectRevert(CircleErrors.OrderAlreadyExists.selector);
+        vault.placeOrder(assetZero, false, 1e8, _size(1), true, 2, 7);
+        vm.stopPrank();
+
+        assertEq(vault.openOrders(), 1, "a refused duplicate must not consume a slot");
+
+        // The slot comes back, which it cannot if the duplicate booked a second time.
+        vm.prank(agent);
+        vault.cancelOrder(7);
+        assertEq(vault.openOrders(), 0, "the slot is leaked");
+    }
+
     /// A thin market's own cap binds even when the trader's is looser.
     function test_thinMarketCapBindsBeforeTheVaultCap() public {
         // 3% of 10,000 is 300: 500 is inside the vault's 12% and outside the asset's 3%.
