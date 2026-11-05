@@ -1,4 +1,4 @@
-.PHONY: install build test invariant verify-deploy journey gas coverage params params-write fmt lint anvil deploy-local hl-deploy-local deploy-amoy deploy-hl-testnet clean
+.PHONY: install build test invariant verify-deploy journey gas coverage params params-write fmt lint anvil deploy-local hl-deploy-local deploy-amoy deploy-hl-testnet hl-execute-queued clean
 
 install:
 	forge install
@@ -87,6 +87,12 @@ WALLET ?= --interactive
 deploy-hl-testnet:
 	forge script script/hyperliquid/Deploy.s.sol:DeployHyperliquid \
 		--rpc-url hyperevm_testnet --broadcast --slow $(WALLET)
+
+# Execute the queued HLMarketWhitelist additions once their timelock elapses. Read-only
+# by default — it prints each asset's eta and how much chain time is left; EXECUTE=1
+# sends. ASSETS overrides the default 3 4 0 (BTC, ETH, SOL as testnet indexes them).
+hl-execute-queued:
+	script/hyperliquid/execute_queued_markets.sh $(if $(EXECUTE),--execute,)
 
 clean:
 	forge clean
