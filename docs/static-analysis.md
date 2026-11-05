@@ -6,6 +6,11 @@ The first Slither run in CI (`crytic/slither-action@v0.4.1`, Slither 0.11.4,
 result. The one fix is a deploy-time recommendation, and the real problem this turned up
 is with the analyser, not the contracts.
 
+> **The cause has since been fixed** (`CircleErrors`, 5 November 2026 — see
+> [Cause](#the-baseline-is-not-trustworthy-yet) below). This page is the triage of the
+> *blind* baseline and is kept as the record of what Slither could not see. The next run
+> is a new baseline and needs its own triage before the job can gate.
+
 ## The baseline is not trustworthy yet
 
 Slither's model of `AgentRegistry`, `AgentVault`, `HLAgentVault` and
@@ -43,20 +48,27 @@ contracts, `placeOrder`, `reconcile`, `requestWithdraw`, `finalizeWithdraw`,
 - Aderyn flags the same thing independently: H-2, "Contract Name Reused in Different
   Files", on `src/libraries/Errors.sol`.
 
-**Fix (needs Udoka's OK, as a `src/` change):** rename our library, for example to
-`CircleErrors`, in `src/libraries/Errors.sol` and its six importers.
+**Fixed, 5 November 2026.** Our library is now `CircleErrors`, in
+`src/libraries/CircleErrors.sol` and its six importers. Where the rest of this page says
+`library Errors` or `src/libraries/Errors.sol`, it means the old name, as this baseline
+saw it; OpenZeppelin's library is untouched and keeps the name.
 - A custom error's selector is `keccak256("ZeroAddress()")` and doesn't include the
-  library name, so the ABI, revert data and tests are unaffected.
-- The bytecode differs only in the metadata hash. That still means the testnet
-  deployment's verified source no longer matches, so do it with the next deploy or
-  accept the mismatch.
+  library name, so the ABI, revert data and tests were unaffected. The 249-test suite
+  passed before and after with no test edited for the rename.
+- The bytecode differs only in the metadata hash. **The HyperEVM testnet deployment of
+  4 November was built from the old name, so its verified source no longer matches the
+  repository.** Nothing on chain changed and no address moved; the next deploy closes the
+  gap. Until then, verify against commit `d218d15`, not `main`.
 
-Until it is fixed, **a clean Slither result says nothing about the order path**. That's
-why the job stays report-only.
-`script/slither-coverage.py` detects the contradictions above in the SARIF and warns in
-CI. When it reports none, set `fail-on: medium`. The diagnostic step in `ci.yml` prints
-Slither's `function-summary` for the two main contracts, which shows what each function
-reads, writes and calls in Slither's model.
+### What this does not yet buy
+
+A Slither run that sees 56 more functions is a run with findings nobody has triaged, so
+the job **stays `fail-on: none`**. The order is: this rename, then a new baseline, then
+triage it here, then set `fail-on: medium`. `script/slither-coverage.py` is what says
+whether the first step worked — it detects the contradictions above in the SARIF and
+warns in CI, and when it reports none, Slither's model and the source agree. The
+diagnostic step in `ci.yml` prints Slither's `function-summary` for the two main
+contracts, which shows what each function reads, writes and calls in Slither's model.
 
 **Before any audit freeze:** get a Slither run with zero coverage contradictions, then
 triage that run's findings again. The verdicts below cover only what Slither could see.
@@ -88,7 +100,7 @@ artifact.
 | Finding | Count | Verdict |
 |---|---|---|
 | H-1 Reentrancy: state change after external call | 23 (15 `AgentVault`, 8 `HLAgentVault`) | **Accepted.** The external calls go to the protocol's own `registry` and `whitelist` (immutables set at construction), to USDC, to HyperCore read precompiles (`staticcall`) and to CoreWriter, which enqueues and never calls back. The flagged entry points are `nonReentrant` (`placeOrder`, `deposit`, `finalizeWithdraw`, `assessFees`) or `initializer`, except `enableFastMode`. That one is only `onlyTrader`, but its external calls are a `view` read of the registry and three CoreWriter actions, none of which can call back. The 15 `AgentVault` hits are the deferred Polygon vault; its adapters are timelocked, and its `execute` path checks balances before and after. Re-check both when Polygon clones return. |
-| H-2 Contract name reused in different files | 1 (`Errors`) | **Fix: the Slither root cause above.** Rename the library. |
+| H-2 Contract name reused in different files | 1 (`Errors`) | **Fixed** 5 November: renamed to `CircleErrors`. |
 | L-8 State variable could be immutable | 5 | **Fix at the next deploy, as recommended above.** `governance` in both whitelists and in `AgentRegistry` is assigned only in the constructor (the registry has no governance setter, by design). `tierBonds` and `tierCeilings` can't be immutable because Solidity doesn't allow immutable arrays. |
 | L-7 State change without event | 1 (`AgentRegistry.notifyAumDelta`) | **Fix, low.** An `AumChanged(listingId, builder, totalAum)` event would let the indexer follow AUM against the ceiling without re-reading storage. |
 | L-10 Unchecked return | 1 (`AgentVault.sol:559`, `IVenueAdapter.exit`) | **Accepted for now.** It's the deferred Polygon path. The vault values positions through `positionValue`, not through `exit`'s return. Revisit with Polygon clones. |

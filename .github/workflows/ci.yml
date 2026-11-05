@@ -63,11 +63,13 @@ jobs:
         with:
           sarif_file: ${{ steps.slither.outputs.sarif }}
 
-      # Report-only, and staying so until this passes. The first baseline called
-      # immutables "never initialized" and constants used in `placeOrder` "never used",
-      # which means Slither's model had lost writes and internal calls — the order path's
-      # limit checks among them — and a clean result from it would not be one. `docs/static-analysis.md`
-      # has the triage. When this step reports no contradictions, set `fail-on: medium`.
+      # Report-only, and staying so until a baseline taken *after* the `CircleErrors`
+      # rename (5 November) has been triaged. The first baseline called immutables "never
+      # initialized" and constants used in `placeOrder` "never used", because the old
+      # `library Errors` collided with OpenZeppelin's and Slither dropped the IR for 56
+      # functions. The rename restores them, which means findings nobody has read yet —
+      # so this step passing is the signal to triage, not to gate. `docs/static-analysis.md`
+      # has the order. Set `fail-on: medium` once that triage is in.
       - name: Check Slither saw the code it reports on
         if: always() && steps.slither.outputs.sarif != ''
         run: |
@@ -88,8 +90,9 @@ jobs:
           slither-args: --print function-summary --include-paths "src/hyperliquid/HLAgentVault.sol|src/AgentRegistry.sol"
 
   # Aderyn, the second analyser in plans/security-readiness.md §3. Its first baseline is
-  # triaged in docs/static-analysis.md. Report-only like Slither until the `Errors`
-  # rename lands; the report is kept as an artifact, not uploaded as code-scanning alerts.
+  # triaged in docs/static-analysis.md, where its H-2 ("contract name reused") was the
+  # same `Errors` collision and is now fixed. Report-only alongside Slither until that
+  # triage is in; the report is kept as an artifact, not uploaded as code-scanning alerts.
   aderyn:
     runs-on: ubuntu-latest
     steps:
