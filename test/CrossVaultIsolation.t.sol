@@ -6,7 +6,7 @@ import { AgentRegistry } from "../src/AgentRegistry.sol";
 import { AgentVault } from "../src/AgentVault.sol";
 import { VenueWhitelist } from "../src/VenueWhitelist.sol";
 import { Constants } from "../src/libraries/Constants.sol";
-import { Errors } from "../src/libraries/Errors.sol";
+import { CircleErrors } from "../src/libraries/CircleErrors.sol";
 import { MockERC20 } from "./mocks/MockERC20.sol";
 import { MockVenueAdapter } from "./mocks/MockVenueAdapter.sol";
 
@@ -95,7 +95,7 @@ contract CrossVaultIsolationTest is Test {
         );
 
         vm.prank(alice);
-        vm.expectRevert(Errors.InsufficientBalance.selector);
+        vm.expectRevert(CircleErrors.InsufficientBalance.selector);
         vault.withdraw(aliceId, 10_000 * UNIT);
 
         // Everything not backing the order is still hers, immediately.

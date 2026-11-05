@@ -410,7 +410,7 @@ src/
   libraries/
     HighWaterMark.sol         fee accounting
     Constants.sol             locked launch parameters and governance guardrails
-    Errors.sol                named to match the Anchor error codes
+    CircleErrors.sol          named to match the Anchor error codes
 test/
   Journey.t.sol               the whole product, printed. start here
   HighWaterMark.t.sol         variance-farming scenarios plus fuzz invariants

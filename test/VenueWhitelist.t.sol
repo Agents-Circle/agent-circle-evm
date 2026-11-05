@@ -3,7 +3,7 @@ pragma solidity 0.8.24;
 
 import { Test } from "forge-std/Test.sol";
 import { VenueWhitelist } from "../src/VenueWhitelist.sol";
-import { Errors } from "../src/libraries/Errors.sol";
+import { CircleErrors } from "../src/libraries/CircleErrors.sol";
 
 /// The Drift lesson, encoded: a compromised governance key must buy the attacker an
 /// announcement, not the funds.
@@ -24,7 +24,7 @@ contract VenueWhitelistTest is Test {
     function test_additionCannotSkipTimelock() public {
         vm.startPrank(governance);
         wl.queueAddition(venue);
-        vm.expectRevert(Errors.TimelockNotElapsed.selector);
+        vm.expectRevert(CircleErrors.TimelockNotElapsed.selector);
         wl.executeAddition(venue);
         vm.stopPrank();
 
@@ -50,16 +50,16 @@ contract VenueWhitelistTest is Test {
 
         vm.warp(block.timestamp + DELAY);
         vm.prank(governance);
-        vm.expectRevert(Errors.ProposalVetoed.selector);
+        vm.expectRevert(CircleErrors.ProposalVetoed.selector);
         wl.executeAddition(venue);
     }
 
     /// The asymmetry that matters: the emergency key can only ever shrink the surface.
     function test_guardianCannotAdd() public {
         vm.startPrank(guardian);
-        vm.expectRevert(Errors.NotGovernance.selector);
+        vm.expectRevert(CircleErrors.NotGovernance.selector);
         wl.queueAddition(venue);
-        vm.expectRevert(Errors.NotGovernance.selector);
+        vm.expectRevert(CircleErrors.NotGovernance.selector);
         wl.executeAddition(venue);
         vm.stopPrank();
     }
@@ -80,15 +80,15 @@ contract VenueWhitelistTest is Test {
 
     function test_executeRequiresAQueuedProposal() public {
         vm.prank(governance);
-        vm.expectRevert(Errors.TimelockNotQueued.selector);
+        vm.expectRevert(CircleErrors.TimelockNotQueued.selector);
         wl.executeAddition(venue);
     }
 
     function test_attackerCannotQueueOrRemove() public {
         vm.startPrank(attacker);
-        vm.expectRevert(Errors.NotGovernance.selector);
+        vm.expectRevert(CircleErrors.NotGovernance.selector);
         wl.queueAddition(venue);
-        vm.expectRevert(Errors.NotGuardian.selector);
+        vm.expectRevert(CircleErrors.NotGuardian.selector);
         wl.removeVenue(venue);
         vm.stopPrank();
     }
@@ -100,21 +100,21 @@ contract VenueWhitelistTest is Test {
         assertEq(wl.guardian(), next);
 
         vm.prank(guardian);
-        vm.expectRevert(Errors.NotGuardian.selector);
+        vm.expectRevert(CircleErrors.NotGuardian.selector);
         wl.removeVenue(venue);
     }
 
     function test_constructorRejectsZeroAddresses() public {
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         new VenueWhitelist(address(0), guardian, DELAY);
 
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         new VenueWhitelist(governance, address(0), DELAY);
     }
 
     function test_cannotQueueTheZeroAddress() public {
         vm.prank(governance);
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         wl.queueAddition(address(0));
     }
 
@@ -130,7 +130,7 @@ contract VenueWhitelistTest is Test {
 
         vm.warp(block.timestamp + DELAY + 1);
         vm.prank(governance);
-        vm.expectRevert(Errors.ProposalVetoed.selector);
+        vm.expectRevert(CircleErrors.ProposalVetoed.selector);
         wl.executeAddition(venue);
 
         assertFalse(wl.isWhitelisted(venue));
@@ -138,7 +138,7 @@ contract VenueWhitelistTest is Test {
 
     function test_cannotVetoSomethingThatWasNeverQueued() public {
         vm.prank(guardian);
-        vm.expectRevert(Errors.TimelockNotQueued.selector);
+        vm.expectRevert(CircleErrors.TimelockNotQueued.selector);
         wl.vetoAddition(venue);
     }
 
@@ -149,7 +149,7 @@ contract VenueWhitelistTest is Test {
         wl.queueAddition(venue);
         wl.vetoAddition(venue);
         vm.warp(block.timestamp + DELAY + 1);
-        vm.expectRevert(Errors.ProposalVetoed.selector);
+        vm.expectRevert(CircleErrors.ProposalVetoed.selector);
         wl.executeAddition(venue);
         vm.stopPrank();
     }
@@ -159,19 +159,19 @@ contract VenueWhitelistTest is Test {
         wl.queueAddition(venue);
 
         vm.prank(attacker);
-        vm.expectRevert(Errors.NotGuardian.selector);
+        vm.expectRevert(CircleErrors.NotGuardian.selector);
         wl.vetoAddition(venue);
     }
 
     function test_guardianRotationRejectsZero() public {
         vm.prank(governance);
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         wl.setGuardian(address(0));
     }
 
     function test_onlyGovernanceRotatesTheGuardian() public {
         vm.prank(guardian);
-        vm.expectRevert(Errors.NotGovernance.selector);
+        vm.expectRevert(CircleErrors.NotGovernance.selector);
         wl.setGuardian(attacker);
     }
 

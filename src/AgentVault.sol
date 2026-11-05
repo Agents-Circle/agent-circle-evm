@@ -8,7 +8,7 @@ import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.s
 import { IAgentRegistry } from "./interfaces/IAgentRegistry.sol";
 import { IVenueAdapter } from "./interfaces/IVenueAdapter.sol";
 import { VenueWhitelist } from "./VenueWhitelist.sol";
-import { Errors } from "./libraries/Errors.sol";
+import { CircleErrors } from "./libraries/CircleErrors.sol";
 import { Constants } from "./libraries/Constants.sol";
 import { HighWaterMark } from "./libraries/HighWaterMark.sol";
 
@@ -101,7 +101,7 @@ contract AgentVault is ReentrancyGuard {
         if (
             quoteToken_ == address(0) || registry_ == address(0) || whitelist_ == address(0)
                 || platformTreasury_ == address(0)
-        ) revert Errors.ZeroAddress();
+        ) revert CircleErrors.ZeroAddress();
 
         quoteToken = IERC20(quoteToken_);
         registry = IAgentRegistry(registry_);
@@ -114,7 +114,7 @@ contract AgentVault is ReentrancyGuard {
     }
 
     modifier onlyTrader(bytes32 id) {
-        if (vaults[id].trader != msg.sender) revert Errors.NotTrader();
+        if (vaults[id].trader != msg.sender) revert CircleErrors.NotTrader();
         _;
     }
 
@@ -129,15 +129,15 @@ contract AgentVault is ReentrancyGuard {
         returns (bytes32 id)
     {
         id = vaultId(msg.sender, listingId_);
-        if (vaults[id].status != VaultStatus.None) revert Errors.VaultAlreadyExists();
+        if (vaults[id].status != VaultStatus.None) revert CircleErrors.VaultAlreadyExists();
 
         IAgentRegistry.Listing memory l = registry.getListing(listingId_);
-        if (l.status != IAgentRegistry.ListingStatus.Live) revert Errors.ListingNotLive();
+        if (l.status != IAgentRegistry.ListingStatus.Live) revert CircleErrors.ListingNotLive();
 
         uint16 cap = positionCapBps_ == 0 ? l.positionCapBps : positionCapBps_;
         uint16 dd = maxDrawdownBps_ == 0 ? l.maxDrawdownBps : maxDrawdownBps_;
         if (cap > l.positionCapBps || dd > l.maxDrawdownBps) {
-            revert Errors.RiskOverrideNotStricter();
+            revert CircleErrors.RiskOverrideNotStricter();
         }
 
         Vault storage v = vaults[id];
@@ -153,12 +153,12 @@ contract AgentVault is ReentrancyGuard {
     }
 
     function deposit(bytes32 id, uint256 amount) external nonReentrant onlyTrader(id) {
-        if (amount == 0) revert Errors.ZeroAmount();
+        if (amount == 0) revert CircleErrors.ZeroAmount();
         Vault storage v = vaults[id];
-        if (v.status != VaultStatus.Active) revert Errors.VaultNotActive();
+        if (v.status != VaultStatus.Active) revert CircleErrors.VaultNotActive();
 
         if (amount > registry.availableAumHeadroom(v.listingId)) {
-            revert Errors.AumCeilingExceeded();
+            revert CircleErrors.AumCeilingExceeded();
         }
 
         quoteToken.safeTransferFrom(msg.sender, address(this), amount);
@@ -178,7 +178,7 @@ contract AgentVault is ReentrancyGuard {
     /// Trader only, and fees are assessed first. Withdrawing ahead of assessment would
     /// let a trader exit a profitable position without paying the fee that profit earned.
     function withdraw(bytes32 id, uint256 amount) external nonReentrant onlyTrader(id) {
-        if (amount == 0) revert Errors.ZeroAmount();
+        if (amount == 0) revert CircleErrors.ZeroAmount();
         _assessFees(id);
 
         Vault storage v = vaults[id];
@@ -193,7 +193,7 @@ contract AgentVault is ReentrancyGuard {
         // This cannot trap anyone. Orders live at most `MAX_ORDER_LIFETIME`, and the
         // trader can `cancelOrder` or `cancelOrders` any reservation on their own vault,
         // so a full withdrawal is always one transaction away and never needs the agent.
-        if (amount > _availableIdle(v)) revert Errors.InsufficientBalance();
+        if (amount > _availableIdle(v)) revert CircleErrors.InsufficientBalance();
 
         HighWaterMark.State memory s =
             HighWaterMark.State({ balance: v.idle, highWaterMark: v.highWaterMark });
@@ -215,7 +215,7 @@ contract AgentVault is ReentrancyGuard {
 
     function resumeVault(bytes32 id) external onlyTrader(id) {
         Vault storage v = vaults[id];
-        if (v.status == VaultStatus.None) revert Errors.VaultNotFound();
+        if (v.status == VaultStatus.None) revert CircleErrors.VaultNotFound();
         v.status = VaultStatus.Active;
         emit StatusChanged(id, VaultStatus.Active);
     }
@@ -227,9 +227,9 @@ contract AgentVault is ReentrancyGuard {
     {
         Vault storage v = vaults[id];
         if (positionCapBps_ > v.positionCapBps || maxDrawdownBps_ > v.maxDrawdownBps) {
-            revert Errors.RiskOverrideNotStricter();
+            revert CircleErrors.RiskOverrideNotStricter();
         }
-        if (positionCapBps_ == 0 || maxDrawdownBps_ == 0) revert Errors.ZeroAmount();
+        if (positionCapBps_ == 0 || maxDrawdownBps_ == 0) revert CircleErrors.ZeroAmount();
 
         v.positionCapBps = positionCapBps_;
         v.maxDrawdownBps = maxDrawdownBps_;
@@ -254,14 +254,14 @@ contract AgentVault is ReentrancyGuard {
         returns (bytes memory result)
     {
         Vault storage v = vaults[id];
-        if (v.status == VaultStatus.None) revert Errors.VaultNotFound();
-        if (v.status != VaultStatus.Active) revert Errors.VaultNotActive();
+        if (v.status == VaultStatus.None) revert CircleErrors.VaultNotFound();
+        if (v.status != VaultStatus.Active) revert CircleErrors.VaultNotActive();
 
         IAgentRegistry.Listing memory l = registry.getListing(v.listingId);
-        if (l.status != IAgentRegistry.ListingStatus.Live) revert Errors.ListingNotLive();
-        if (msg.sender != l.agentAuthority) revert Errors.NotAgentAuthority();
-        if (!whitelist.isWhitelisted(venue)) revert Errors.VenueNotWhitelisted();
-        if (maxSpend > v.idle) revert Errors.InsufficientBalance();
+        if (l.status != IAgentRegistry.ListingStatus.Live) revert CircleErrors.ListingNotLive();
+        if (msg.sender != l.agentAuthority) revert CircleErrors.NotAgentAuthority();
+        if (!whitelist.isWhitelisted(venue)) revert CircleErrors.VenueNotWhitelisted();
+        if (maxSpend > v.idle) revert CircleErrors.InsufficientBalance();
 
         uint256 heldBefore = quoteToken.balanceOf(address(this));
 
@@ -280,7 +280,7 @@ contract AgentVault is ReentrancyGuard {
         // (closing a position) increases idle rather than decreasing it.
         if (heldBefore >= heldAfter) {
             uint256 spent = heldBefore - heldAfter;
-            if (spent > v.idle) revert Errors.InsufficientBalance();
+            if (spent > v.idle) revert CircleErrors.InsufficientBalance();
             v.idle -= spent;
         } else {
             v.idle += (heldAfter - heldBefore);
@@ -300,7 +300,7 @@ contract AgentVault is ReentrancyGuard {
                 v.status = VaultStatus.Paused;
                 emit AutoPaused(id, dd);
             } else {
-                revert Errors.DrawdownLimitBreached();
+                revert CircleErrors.DrawdownLimitBreached();
             }
         }
 
@@ -336,22 +336,22 @@ contract AgentVault is ReentrancyGuard {
         uint64 expiry
     ) external {
         Vault storage v = vaults[id];
-        if (v.status == VaultStatus.None) revert Errors.VaultNotFound();
-        if (v.status != VaultStatus.Active) revert Errors.VaultNotActive();
-        if (maxCost == 0) revert Errors.ZeroAmount();
-        if (orders[orderHash].vaultId != bytes32(0)) revert Errors.OrderAlreadyExists();
+        if (v.status == VaultStatus.None) revert CircleErrors.VaultNotFound();
+        if (v.status != VaultStatus.Active) revert CircleErrors.VaultNotActive();
+        if (maxCost == 0) revert CircleErrors.ZeroAmount();
+        if (orders[orderHash].vaultId != bytes32(0)) revert CircleErrors.OrderAlreadyExists();
 
         IAgentRegistry.Listing memory l = registry.getListing(v.listingId);
-        if (l.status != IAgentRegistry.ListingStatus.Live) revert Errors.ListingNotLive();
-        if (msg.sender != l.agentAuthority) revert Errors.NotAgentAuthority();
-        if (!whitelist.isWhitelisted(venue)) revert Errors.VenueNotWhitelisted();
+        if (l.status != IAgentRegistry.ListingStatus.Live) revert CircleErrors.ListingNotLive();
+        if (msg.sender != l.agentAuthority) revert CircleErrors.NotAgentAuthority();
+        if (!whitelist.isWhitelisted(venue)) revert CircleErrors.VenueNotWhitelisted();
 
-        if (expiry <= block.timestamp) revert Errors.OrderExpired();
+        if (expiry <= block.timestamp) revert CircleErrors.OrderExpired();
         if (expiry > block.timestamp + Constants.MAX_ORDER_LIFETIME) {
-            revert Errors.OrderLifetimeTooLong();
+            revert CircleErrors.OrderLifetimeTooLong();
         }
 
-        if (v.openOrders >= Constants.MAX_OPEN_ORDERS) revert Errors.TooManyOpenOrders();
+        if (v.openOrders >= Constants.MAX_OPEN_ORDERS) revert CircleErrors.TooManyOpenOrders();
 
         uint256 reservedAfter = v.reserved + maxCost;
         uint256 value = _totalValue(id);
@@ -363,12 +363,12 @@ contract AgentVault is ReentrancyGuard {
         // left the vault short of what is outstanding — a cap of 25% or less cannot on
         // its own authorise more than the idle balance. It is kept as a direct statement
         // of the invariant rather than something inferred from the cap arithmetic.
-        if (reservedAfter > v.idle) revert Errors.InsufficientBalance();
+        if (reservedAfter > v.idle) revert CircleErrors.InsufficientBalance();
 
         _requireWithinPositionCap(value - v.idle, reservedAfter, value, v.positionCapBps);
 
         address spender = IVenueAdapter(venue).settlementSpender();
-        if (spender == address(0)) revert Errors.ZeroAddress();
+        if (spender == address(0)) revert CircleErrors.ZeroAddress();
 
         v.reserved = reservedAfter;
         ++v.openOrders;
@@ -391,12 +391,12 @@ contract AgentVault is ReentrancyGuard {
     /// expiry to free a reservation should not be the only option available to them.
     function cancelOrder(bytes32 orderHash) external {
         Order storage o = orders[orderHash];
-        if (o.vaultId == bytes32(0)) revert Errors.OrderNotFound();
+        if (o.vaultId == bytes32(0)) revert CircleErrors.OrderNotFound();
 
         Vault storage v = vaults[o.vaultId];
         if (msg.sender != v.trader) {
             if (msg.sender != registry.getListing(v.listingId).agentAuthority) {
-                revert Errors.NotTraderOrAgent();
+                revert CircleErrors.NotTraderOrAgent();
             }
         }
         _release(orderHash);
@@ -413,12 +413,12 @@ contract AgentVault is ReentrancyGuard {
         for (uint256 i; i < orderHashes.length; ++i) {
             bytes32 orderHash = orderHashes[i];
             Order storage o = orders[orderHash];
-            if (o.vaultId == bytes32(0)) revert Errors.OrderNotFound();
+            if (o.vaultId == bytes32(0)) revert CircleErrors.OrderNotFound();
 
             Vault storage v = vaults[o.vaultId];
             if (msg.sender != v.trader) {
                 if (msg.sender != registry.getListing(v.listingId).agentAuthority) {
-                    revert Errors.NotTraderOrAgent();
+                    revert CircleErrors.NotTraderOrAgent();
                 }
             }
             _release(orderHash);
@@ -429,8 +429,8 @@ contract AgentVault is ReentrancyGuard {
     /// only ever dead weight on a trader's capital, so anyone may clear it.
     function releaseExpiredOrder(bytes32 orderHash) external {
         Order storage o = orders[orderHash];
-        if (o.vaultId == bytes32(0)) revert Errors.OrderNotFound();
-        if (block.timestamp <= o.expiry) revert Errors.OrderNotExpired();
+        if (o.vaultId == bytes32(0)) revert CircleErrors.OrderNotFound();
+        if (block.timestamp <= o.expiry) revert CircleErrors.OrderNotExpired();
         _release(orderHash);
     }
 
@@ -472,7 +472,7 @@ contract AgentVault is ReentrancyGuard {
 
     function _release(bytes32 orderHash) internal {
         Order storage o = orders[orderHash];
-        if (o.released) revert Errors.OrderNotFound();
+        if (o.released) revert CircleErrors.OrderNotFound();
 
         o.released = true;
         Vault storage v = vaults[o.vaultId];
@@ -537,11 +537,11 @@ contract AgentVault is ReentrancyGuard {
         returns (uint256 proceeds)
     {
         Vault storage v = vaults[id];
-        if (v.status == VaultStatus.None) revert Errors.VaultNotFound();
+        if (v.status == VaultStatus.None) revert CircleErrors.VaultNotFound();
 
         if (msg.sender != v.trader) {
             if (msg.sender != registry.getListing(v.listingId).agentAuthority) {
-                revert Errors.NotTraderOrAgent();
+                revert CircleErrors.NotTraderOrAgent();
             }
         }
 
@@ -552,14 +552,14 @@ contract AgentVault is ReentrancyGuard {
         // worth, suppressing the drawdown check, and letting a builder bill a performance
         // fee on profit that does not exist.
         if (!_hasTouched[id][venue] && !whitelist.isWhitelisted(venue)) {
-            revert Errors.VenueNotWhitelisted();
+            revert CircleErrors.VenueNotWhitelisted();
         }
 
         uint256 heldBefore = quoteToken.balanceOf(address(this));
         IVenueAdapter(venue).exit(address(this), id, data);
         uint256 heldAfter = quoteToken.balanceOf(address(this));
 
-        if (heldAfter < heldBefore) revert Errors.VaultValueDecreasedUnexpectedly();
+        if (heldAfter < heldBefore) revert CircleErrors.VaultValueDecreasedUnexpectedly();
         proceeds = heldAfter - heldBefore;
 
         _touch(id, venue);
@@ -577,16 +577,16 @@ contract AgentVault is ReentrancyGuard {
     /// repeated rounding.
     function assessFees(bytes32 id) external nonReentrant {
         Vault storage v = vaults[id];
-        if (v.status == VaultStatus.None) revert Errors.VaultNotFound();
+        if (v.status == VaultStatus.None) revert CircleErrors.VaultNotFound();
         if (block.timestamp < v.lastFeeAssessment + Constants.FEE_ASSESSMENT_INTERVAL) {
-            revert Errors.FeeAssessmentTooSoon();
+            revert CircleErrors.FeeAssessmentTooSoon();
         }
         _assessFees(id);
     }
 
     function _assessFees(bytes32 id) internal {
         Vault storage v = vaults[id];
-        if (v.status == VaultStatus.None) revert Errors.VaultNotFound();
+        if (v.status == VaultStatus.None) revert CircleErrors.VaultNotFound();
 
         IAgentRegistry.Listing memory l = registry.getListing(v.listingId);
 
@@ -665,7 +665,7 @@ contract AgentVault is ReentrancyGuard {
         uint16 capBps
     ) internal pure {
         if ((positionValue + reserved) * Constants.BPS > value * capBps) {
-            revert Errors.PositionCapExceeded();
+            revert CircleErrors.PositionCapExceeded();
         }
     }
 

@@ -6,7 +6,7 @@ import { AgentRegistry } from "../src/AgentRegistry.sol";
 import { AgentVault } from "../src/AgentVault.sol";
 import { VenueWhitelist } from "../src/VenueWhitelist.sol";
 import { IAgentRegistry } from "../src/interfaces/IAgentRegistry.sol";
-import { Errors } from "../src/libraries/Errors.sol";
+import { CircleErrors } from "../src/libraries/CircleErrors.sol";
 import { Constants } from "../src/libraries/Constants.sol";
 import { MockERC20 } from "./mocks/MockERC20.sol";
 import { MockVenueAdapter, GreedyVenueAdapter } from "./mocks/MockVenueAdapter.sol";
@@ -84,11 +84,11 @@ contract AgentVaultTest is Test {
 
     function test_onlyTraderCanWithdraw() public {
         vm.prank(agent);
-        vm.expectRevert(Errors.NotTrader.selector);
+        vm.expectRevert(CircleErrors.NotTrader.selector);
         vault.withdraw(id, 1 * UNIT);
 
         vm.prank(attacker);
-        vm.expectRevert(Errors.NotTrader.selector);
+        vm.expectRevert(CircleErrors.NotTrader.selector);
         vault.withdraw(id, 1 * UNIT);
 
         vm.prank(trader);
@@ -100,17 +100,17 @@ contract AgentVaultTest is Test {
     /// path from agent authority to an arbitrary transfer.
     function test_agentCannotReachAnArbitraryAddress() public {
         vm.prank(agent);
-        vm.expectRevert(Errors.VenueNotWhitelisted.selector);
+        vm.expectRevert(CircleErrors.VenueNotWhitelisted.selector);
         vault.executeTrade(id, attacker, 10_000 * UNIT, "");
     }
 
     function test_onlyAgentAuthorityCanTrade() public {
         vm.prank(attacker);
-        vm.expectRevert(Errors.NotAgentAuthority.selector);
+        vm.expectRevert(CircleErrors.NotAgentAuthority.selector);
         vault.executeTrade(id, address(venue), 1_000 * UNIT, abi.encode(id, uint256(0), uint256(0)));
 
         vm.prank(trader);
-        vm.expectRevert(Errors.NotAgentAuthority.selector);
+        vm.expectRevert(CircleErrors.NotAgentAuthority.selector);
         vault.executeTrade(id, address(venue), 1_000 * UNIT, abi.encode(id, uint256(0), uint256(0)));
     }
 
@@ -144,7 +144,7 @@ contract AgentVaultTest is Test {
         // Trader 1 cannot withdraw more than their own idle balance even though the
         // contract holds 15,000 in total.
         vm.prank(trader);
-        vm.expectRevert(Errors.InsufficientBalance.selector);
+        vm.expectRevert(CircleErrors.InsufficientBalance.selector);
         vault.withdraw(id, 12_000 * UNIT);
 
         assertEq(vault.totalValue(id), 10_000 * UNIT);
@@ -156,7 +156,7 @@ contract AgentVaultTest is Test {
     function test_positionCapEnforcedAtomically() public {
         // Cap is 1200bps. 2,000 of a 10,000 vault is 2000bps and must revert everything.
         vm.prank(agent);
-        vm.expectRevert(Errors.PositionCapExceeded.selector);
+        vm.expectRevert(CircleErrors.PositionCapExceeded.selector);
         vault.executeTrade(
             id,
             address(venue),
@@ -190,7 +190,7 @@ contract AgentVaultTest is Test {
 
         // Only the trader can resume.
         vm.prank(agent);
-        vm.expectRevert(Errors.NotTrader.selector);
+        vm.expectRevert(CircleErrors.NotTrader.selector);
         vault.resumeVault(id);
 
         vm.prank(trader);
@@ -202,7 +202,7 @@ contract AgentVaultTest is Test {
         vault.pauseVault(id);
 
         vm.prank(agent);
-        vm.expectRevert(Errors.VaultNotActive.selector);
+        vm.expectRevert(CircleErrors.VaultNotActive.selector);
         vault.executeTrade(
             id, address(venue), 100 * UNIT, abi.encode(id, uint256(100 * UNIT), uint256(100 * UNIT))
         );
@@ -211,7 +211,7 @@ contract AgentVaultTest is Test {
     function test_riskOverridesMustBeStricter() public {
         address t2 = makeAddr("t2");
         vm.prank(t2);
-        vm.expectRevert(Errors.RiskOverrideNotStricter.selector);
+        vm.expectRevert(CircleErrors.RiskOverrideNotStricter.selector);
         vault.openVault(listingId, 5_000, 1_500);
 
         vm.prank(t2);
@@ -223,7 +223,7 @@ contract AgentVaultTest is Test {
 
     function test_riskLimitsCanOnlyBeTightened() public {
         vm.startPrank(trader);
-        vm.expectRevert(Errors.RiskOverrideNotStricter.selector);
+        vm.expectRevert(CircleErrors.RiskOverrideNotStricter.selector);
         vault.tightenRiskLimits(id, 2_000, 1_500);
 
         vault.tightenRiskLimits(id, 600, 800);
@@ -239,7 +239,7 @@ contract AgentVaultTest is Test {
         registry.suspendListing(listingId);
 
         vm.prank(agent);
-        vm.expectRevert(Errors.ListingNotLive.selector);
+        vm.expectRevert(CircleErrors.ListingNotLive.selector);
         vault.executeTrade(
             id, address(venue), 100 * UNIT, abi.encode(id, uint256(100 * UNIT), uint256(100 * UNIT))
         );
@@ -255,7 +255,7 @@ contract AgentVaultTest is Test {
     function test_depositRejectedAboveAumCeiling() public {
         // Tier 1 ceiling is 25,000 and 10,000 is already in.
         vm.prank(trader);
-        vm.expectRevert(Errors.AumCeilingExceeded.selector);
+        vm.expectRevert(CircleErrors.AumCeilingExceeded.selector);
         vault.deposit(id, 20_000 * UNIT);
     }
 
@@ -289,7 +289,7 @@ contract AgentVaultTest is Test {
     }
 
     function test_crankIsRateLimited() public {
-        vm.expectRevert(Errors.FeeAssessmentTooSoon.selector);
+        vm.expectRevert(CircleErrors.FeeAssessmentTooSoon.selector);
         vault.assessFees(id);
     }
 
@@ -307,22 +307,22 @@ contract AgentVaultTest is Test {
     // leave every test above still passing.
 
     function test_constructorRejectsZeroAddresses() public {
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         new AgentVault(address(0), address(registry), address(whitelist), treasury);
 
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         new AgentVault(address(usdc), address(0), address(whitelist), treasury);
 
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         new AgentVault(address(usdc), address(registry), address(0), treasury);
 
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         new AgentVault(address(usdc), address(registry), address(whitelist), address(0));
     }
 
     function test_cannotOpenTheSameVaultTwice() public {
         vm.prank(trader);
-        vm.expectRevert(Errors.VaultAlreadyExists.selector);
+        vm.expectRevert(CircleErrors.VaultAlreadyExists.selector);
         vault.openVault(listingId, 0, 0);
     }
 
@@ -331,38 +331,38 @@ contract AgentVaultTest is Test {
         registry.suspendListing(listingId);
 
         vm.prank(attacker);
-        vm.expectRevert(Errors.ListingNotLive.selector);
+        vm.expectRevert(CircleErrors.ListingNotLive.selector);
         vault.openVault(listingId, 0, 0);
     }
 
     /// Looser than the listing was vetted at, in either field, is refused at open time.
     function test_openVaultRefusesLooserLimits() public {
         vm.startPrank(attacker);
-        vm.expectRevert(Errors.RiskOverrideNotStricter.selector);
+        vm.expectRevert(CircleErrors.RiskOverrideNotStricter.selector);
         vault.openVault(listingId, Constants.DEFAULT_POSITION_CAP_BPS + 1, 0);
 
-        vm.expectRevert(Errors.RiskOverrideNotStricter.selector);
+        vm.expectRevert(CircleErrors.RiskOverrideNotStricter.selector);
         vault.openVault(listingId, 0, Constants.DEFAULT_MAX_DRAWDOWN_BPS + 1);
         vm.stopPrank();
     }
 
     function test_depositGuards() public {
         vm.startPrank(trader);
-        vm.expectRevert(Errors.ZeroAmount.selector);
+        vm.expectRevert(CircleErrors.ZeroAmount.selector);
         vault.deposit(id, 0);
 
         vault.pauseVault(id);
-        vm.expectRevert(Errors.VaultNotActive.selector);
+        vm.expectRevert(CircleErrors.VaultNotActive.selector);
         vault.deposit(id, 1 * UNIT);
         vm.stopPrank();
     }
 
     function test_withdrawRejectsZeroAndOverdraw() public {
         vm.startPrank(trader);
-        vm.expectRevert(Errors.ZeroAmount.selector);
+        vm.expectRevert(CircleErrors.ZeroAmount.selector);
         vault.withdraw(id, 0);
 
-        vm.expectRevert(Errors.InsufficientBalance.selector);
+        vm.expectRevert(CircleErrors.InsufficientBalance.selector);
         vault.withdraw(id, 10_001 * UNIT);
         vm.stopPrank();
     }
@@ -378,42 +378,42 @@ contract AgentVaultTest is Test {
     /// removed, since this is custody code and the removal is a separate decision.
     function test_resumeUnknownVaultRevertsAsNotTrader() public {
         vm.prank(trader);
-        vm.expectRevert(Errors.NotTrader.selector);
+        vm.expectRevert(CircleErrors.NotTrader.selector);
         vault.resumeVault(keccak256("nope"));
     }
 
     function test_tightenRejectsZeroAndLooser() public {
         vm.startPrank(trader);
-        vm.expectRevert(Errors.ZeroAmount.selector);
+        vm.expectRevert(CircleErrors.ZeroAmount.selector);
         vault.tightenRiskLimits(id, 0, 500);
 
-        vm.expectRevert(Errors.ZeroAmount.selector);
+        vm.expectRevert(CircleErrors.ZeroAmount.selector);
         vault.tightenRiskLimits(id, 500, 0);
 
-        vm.expectRevert(Errors.RiskOverrideNotStricter.selector);
+        vm.expectRevert(CircleErrors.RiskOverrideNotStricter.selector);
         vault.tightenRiskLimits(id, Constants.DEFAULT_POSITION_CAP_BPS + 1, 500);
 
-        vm.expectRevert(Errors.RiskOverrideNotStricter.selector);
+        vm.expectRevert(CircleErrors.RiskOverrideNotStricter.selector);
         vault.tightenRiskLimits(id, 500, Constants.DEFAULT_MAX_DRAWDOWN_BPS + 1);
         vm.stopPrank();
     }
 
     function test_onlyTraderCanPauseOrTighten() public {
         vm.startPrank(attacker);
-        vm.expectRevert(Errors.NotTrader.selector);
+        vm.expectRevert(CircleErrors.NotTrader.selector);
         vault.pauseVault(id);
 
-        vm.expectRevert(Errors.NotTrader.selector);
+        vm.expectRevert(CircleErrors.NotTrader.selector);
         vault.tightenRiskLimits(id, 500, 500);
 
-        vm.expectRevert(Errors.NotTrader.selector);
+        vm.expectRevert(CircleErrors.NotTrader.selector);
         vault.resumeVault(id);
         vm.stopPrank();
     }
 
     function test_tradeOnUnknownVaultReverts() public {
         vm.prank(agent);
-        vm.expectRevert(Errors.VaultNotFound.selector);
+        vm.expectRevert(CircleErrors.VaultNotFound.selector);
         vault.executeTrade(keccak256("nope"), address(venue), 1, "");
     }
 
@@ -421,7 +421,7 @@ contract AgentVaultTest is Test {
         vm.prank(trader);
         vault.pauseVault(id);
         vm.prank(agent);
-        vm.expectRevert(Errors.VaultNotActive.selector);
+        vm.expectRevert(CircleErrors.VaultNotActive.selector);
         vault.executeTrade(id, address(venue), 1 * UNIT, abi.encode(id, 1 * UNIT, 1 * UNIT));
 
         vm.prank(trader);
@@ -430,7 +430,7 @@ contract AgentVaultTest is Test {
         vm.prank(guardian);
         registry.suspendListing(listingId);
         vm.prank(agent);
-        vm.expectRevert(Errors.ListingNotLive.selector);
+        vm.expectRevert(CircleErrors.ListingNotLive.selector);
         vault.executeTrade(id, address(venue), 1 * UNIT, abi.encode(id, 1 * UNIT, 1 * UNIT));
     }
 
@@ -438,11 +438,11 @@ contract AgentVaultTest is Test {
         MockVenueAdapter rogue = new MockVenueAdapter(address(usdc));
 
         vm.prank(agent);
-        vm.expectRevert(Errors.VenueNotWhitelisted.selector);
+        vm.expectRevert(CircleErrors.VenueNotWhitelisted.selector);
         vault.executeTrade(id, address(rogue), 1 * UNIT, abi.encode(id, 1 * UNIT, 1 * UNIT));
 
         vm.prank(agent);
-        vm.expectRevert(Errors.InsufficientBalance.selector);
+        vm.expectRevert(CircleErrors.InsufficientBalance.selector);
         vault.executeTrade(
             id, address(venue), 10_001 * UNIT, abi.encode(id, 10_001 * UNIT, 10_001 * UNIT)
         );
@@ -484,26 +484,26 @@ contract AgentVaultTest is Test {
 
     function test_exitGuards() public {
         vm.prank(trader);
-        vm.expectRevert(Errors.VaultNotFound.selector);
+        vm.expectRevert(CircleErrors.VaultNotFound.selector);
         vault.exitPosition(keccak256("nope"), address(venue), "");
 
         vm.prank(attacker);
-        vm.expectRevert(Errors.NotTraderOrAgent.selector);
+        vm.expectRevert(CircleErrors.NotTraderOrAgent.selector);
         vault.exitPosition(id, address(venue), "");
 
         // A venue this vault has never traded through, and which is not whitelisted,
         // cannot be spliced into the position-value sum via the exit path.
         MockVenueAdapter rogue = new MockVenueAdapter(address(usdc));
         vm.prank(trader);
-        vm.expectRevert(Errors.VenueNotWhitelisted.selector);
+        vm.expectRevert(CircleErrors.VenueNotWhitelisted.selector);
         vault.exitPosition(id, address(rogue), "");
     }
 
     function test_feeAssessmentIsRateLimited() public {
-        vm.expectRevert(Errors.FeeAssessmentTooSoon.selector);
+        vm.expectRevert(CircleErrors.FeeAssessmentTooSoon.selector);
         vault.assessFees(id);
 
-        vm.expectRevert(Errors.VaultNotFound.selector);
+        vm.expectRevert(CircleErrors.VaultNotFound.selector);
         vault.assessFees(keccak256("nope"));
     }
 

@@ -11,7 +11,7 @@ import { PrecompileLib } from "@hyper-evm-lib/src/PrecompileLib.sol";
 
 import { IAgentRegistry } from "../interfaces/IAgentRegistry.sol";
 import { HLMarketWhitelist } from "./HLMarketWhitelist.sol";
-import { Errors } from "../libraries/Errors.sol";
+import { CircleErrors } from "../libraries/CircleErrors.sol";
 import { Constants } from "../libraries/Constants.sol";
 import { HighWaterMark } from "../libraries/HighWaterMark.sol";
 
@@ -211,7 +211,7 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
         if (
             usdc_ == address(0) || registry_ == address(0) || whitelist_ == address(0)
                 || platformTreasury_ == address(0) || platformBuilder_ == address(0)
-        ) revert Errors.ZeroAddress();
+        ) revert CircleErrors.ZeroAddress();
 
         usdc = IERC20(usdc_);
         registry = IAgentRegistry(registry_);
@@ -239,15 +239,15 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
         uint16 positionCapBps_,
         uint16 maxDrawdownBps_
     ) external initializer {
-        if (trader_ == address(0)) revert Errors.ZeroAddress();
+        if (trader_ == address(0)) revert CircleErrors.ZeroAddress();
 
         IAgentRegistry.Listing memory l = registry.getListing(listingId_);
-        if (l.status != IAgentRegistry.ListingStatus.Live) revert Errors.ListingNotLive();
+        if (l.status != IAgentRegistry.ListingStatus.Live) revert CircleErrors.ListingNotLive();
 
         uint16 cap = positionCapBps_ == 0 ? l.positionCapBps : positionCapBps_;
         uint16 dd = maxDrawdownBps_ == 0 ? l.maxDrawdownBps : maxDrawdownBps_;
         if (cap > l.positionCapBps || dd > l.maxDrawdownBps) {
-            revert Errors.RiskOverrideNotStricter();
+            revert CircleErrors.RiskOverrideNotStricter();
         }
 
         trader = trader_;
@@ -262,20 +262,20 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
     }
 
     modifier onlyTrader() {
-        if (msg.sender != trader) revert Errors.NotTrader();
+        if (msg.sender != trader) revert CircleErrors.NotTrader();
         _;
     }
 
     modifier onlyAgent() {
         if (msg.sender != registry.getListing(listingId).agentAuthority) {
-            revert Errors.NotAgentAuthority();
+            revert CircleErrors.NotAgentAuthority();
         }
         _;
     }
 
     modifier onlyTraderOrAgent() {
         if (msg.sender != trader && msg.sender != registry.getListing(listingId).agentAuthority) {
-            revert Errors.NotTraderOrAgent();
+            revert CircleErrors.NotTraderOrAgent();
         }
         _;
     }
@@ -287,11 +287,11 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
     /// Both hops are fire-and-forget, so this records the amount as pending rather than
     /// as balance. `reconcile` is what observes it arriving.
     function deposit(uint64 amount) external nonReentrant onlyTrader {
-        if (amount == 0) revert Errors.ZeroAmount();
-        if (status != VaultStatus.Active) revert Errors.VaultNotActive();
+        if (amount == 0) revert CircleErrors.ZeroAmount();
+        if (status != VaultStatus.Active) revert CircleErrors.VaultNotActive();
 
         if (amount > registry.availableAumHeadroom(listingId)) {
-            revert Errors.AumCeilingExceeded();
+            revert CircleErrors.AumCeilingExceeded();
         }
 
         usdc.safeTransferFrom(msg.sender, address(this), amount);
@@ -345,17 +345,17 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
         uint8 tif,
         uint128 cloid
     ) external nonReentrant onlyAgent {
-        if (status != VaultStatus.Active) revert Errors.VaultNotActive();
+        if (status != VaultStatus.Active) revert CircleErrors.VaultNotActive();
         if (registry.getListing(listingId).status != IAgentRegistry.ListingStatus.Live) {
-            revert Errors.ListingNotLive();
+            revert CircleErrors.ListingNotLive();
         }
-        if (sz == 0 || limitPx == 0) revert Errors.ZeroAmount();
-        if (cloid == 0) revert Errors.ZeroAmount();
+        if (sz == 0 || limitPx == 0) revert CircleErrors.ZeroAmount();
+        if (cloid == 0) revert CircleErrors.ZeroAmount();
         if (reservations[cloid].asset != 0 || reservations[cloid].maxCost != 0) {
-            revert Errors.OrderAlreadyExists();
+            revert CircleErrors.OrderAlreadyExists();
         }
-        if (!whitelist.isListed(asset)) revert Errors.VenueNotWhitelisted();
-        if (openOrders >= Constants.MAX_OPEN_ORDERS) revert Errors.TooManyOpenOrders();
+        if (!whitelist.isListed(asset)) revert CircleErrors.VenueNotWhitelisted();
+        if (openOrders >= Constants.MAX_OPEN_ORDERS) revert CircleErrors.TooManyOpenOrders();
 
         uint64 currentEquity = _equity();
         _requireWithinDrawdown(currentEquity);
@@ -374,7 +374,7 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
         _track(asset);
 
         if (!reduceOnly) {
-            if (maxCost == 0) revert Errors.ZeroAmount();
+            if (maxCost == 0) revert CircleErrors.ZeroAmount();
             uint64 reservedAfter = reserved + maxCost;
 
             // The stricter of the vault's cap and the asset's own. A thin HIP-3 or HIP-4
@@ -400,8 +400,8 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
     /// it is their money and waiting out an expiry should not be their only option.
     function cancelOrder(uint128 cloid) external onlyTraderOrAgent {
         Reservation storage r = reservations[cloid];
-        if (r.expiry == 0) revert Errors.OrderNotFound();
-        if (r.released) revert Errors.OrderNotFound();
+        if (r.expiry == 0) revert CircleErrors.OrderNotFound();
+        if (r.released) revert CircleErrors.OrderNotFound();
 
         uint32 asset = r.asset;
         _release(cloid, "cancelled");
@@ -440,7 +440,7 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
     /// - Raise the high-water mark, and if drawdown has breached the limit, pause and
     ///   send reduce-only closes.
     function reconcile(uint128[] calldata staleCloids) external nonReentrant {
-        if (status == VaultStatus.None) revert Errors.VaultNotFound();
+        if (status == VaultStatus.None) revert CircleErrors.VaultNotFound();
 
         uint64 currentEquity = _equity();
 
@@ -577,16 +577,16 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
     }
 
     function resume() external onlyTrader {
-        if (status == VaultStatus.None) revert Errors.VaultNotFound();
+        if (status == VaultStatus.None) revert CircleErrors.VaultNotFound();
         status = VaultStatus.Active;
         emit StatusChanged(VaultStatus.Active);
     }
 
     /// Tighten-only, for the same reason overrides are stricter-only at initialisation.
     function tightenRiskLimits(uint16 positionCapBps_, uint16 maxDrawdownBps_) external onlyTrader {
-        if (positionCapBps_ == 0 || maxDrawdownBps_ == 0) revert Errors.ZeroAmount();
+        if (positionCapBps_ == 0 || maxDrawdownBps_ == 0) revert CircleErrors.ZeroAmount();
         if (positionCapBps_ > positionCapBps || maxDrawdownBps_ > maxDrawdownBps) {
-            revert Errors.RiskOverrideNotStricter();
+            revert CircleErrors.RiskOverrideNotStricter();
         }
         positionCapBps = positionCapBps_;
         maxDrawdownBps = maxDrawdownBps_;
@@ -624,7 +624,7 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
     /// protocol" — the vault, the listing and the whitelist cannot stop it — rather than
     /// "withdrawal always succeeds".
     function requestWithdraw(uint64 amount) external nonReentrant onlyTrader {
-        if (amount == 0) revert Errors.ZeroAmount();
+        if (amount == 0) revert CircleErrors.ZeroAmount();
 
         // Reserved capital is excluded: an outstanding order could still settle against
         // it. Unlike the Polygon vault this cannot strand anyone even in principle,
@@ -632,7 +632,7 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
         // expire within the hour regardless.
         uint64 currentEquity = _equity();
         uint64 available = currentEquity > reserved ? currentEquity - reserved : 0;
-        if (amount > available) revert Errors.InsufficientBalance();
+        if (amount > available) revert CircleErrors.InsufficientBalance();
 
         pendingWithdrawal += amount;
 
@@ -646,16 +646,16 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
     /// money to the trader, and making the trader's own payout depend on their sending a
     /// second transaction at the right moment would be a poor guarantee.
     function finalizeWithdraw() external nonReentrant {
-        if (status == VaultStatus.None) revert Errors.VaultNotFound();
+        if (status == VaultStatus.None) revert CircleErrors.VaultNotFound();
 
         _sweepFees();
 
         uint256 balance = usdc.balanceOf(address(this));
-        if (balance == 0) revert Errors.InsufficientBalance();
+        if (balance == 0) revert CircleErrors.InsufficientBalance();
 
         uint64 amount = balance > type(uint64).max ? type(uint64).max : uint64(balance);
         if (amount > pendingWithdrawal) amount = pendingWithdrawal;
-        if (amount == 0) revert Errors.ZeroAmount();
+        if (amount == 0) revert CircleErrors.ZeroAmount();
 
         pendingWithdrawal -= amount;
 
@@ -675,7 +675,7 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
     /// governance has removed the asset — a vault that auto-paused into a drawdown is
     /// precisely the vault that most needs to get out.
     function exitPosition(uint32 asset) external onlyTraderOrAgent {
-        if (status == VaultStatus.None) revert Errors.VaultNotFound();
+        if (status == VaultStatus.None) revert CircleErrors.VaultNotFound();
         _sendReduceOnlyClose(asset);
     }
 
@@ -711,9 +711,9 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
     ///
     /// Rate-limited so nobody can grind a vault down through repeated rounding.
     function assessFees() external nonReentrant {
-        if (status == VaultStatus.None) revert Errors.VaultNotFound();
+        if (status == VaultStatus.None) revert CircleErrors.VaultNotFound();
         if (block.timestamp < lastFeeAssessment + Constants.FEE_ASSESSMENT_INTERVAL) {
-            revert Errors.FeeAssessmentTooSoon();
+            revert CircleErrors.FeeAssessmentTooSoon();
         }
 
         IAgentRegistry.Listing memory l = registry.getListing(listingId);
@@ -787,11 +787,11 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
     /// An API wallet can trade but cannot withdraw, so custody still holds. That is the
     /// floor under this mode, and it is the only guarantee that survives it.
     function enableFastMode(address apiWallet_) external onlyTrader {
-        if (apiWallet_ == address(0)) revert Errors.ZeroAddress();
-        if (status != VaultStatus.Active) revert Errors.VaultNotActive();
+        if (apiWallet_ == address(0)) revert CircleErrors.ZeroAddress();
+        if (status != VaultStatus.Active) revert CircleErrors.VaultNotActive();
 
         IAgentRegistry.Listing memory l = registry.getListing(listingId);
-        if (l.status != IAgentRegistry.ListingStatus.Live) revert Errors.ListingNotLive();
+        if (l.status != IAgentRegistry.ListingStatus.Live) revert CircleErrors.ListingNotLive();
 
         apiWallet = apiWallet_;
 
@@ -822,7 +822,7 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
     /// and the position it would be trading has already been closed.
     function disableFastMode() external onlyTraderOrAgent {
         address previous = apiWallet;
-        if (previous == address(0)) revert Errors.AlreadySet();
+        if (previous == address(0)) revert CircleErrors.AlreadySet();
 
         apiWallet = address(0);
         status = VaultStatus.Paused;
@@ -886,18 +886,18 @@ contract HLAgentVault is Initializable, ReentrancyGuard {
         uint64 equity_,
         uint16 capBps
     ) internal pure {
-        if (capBps == 0) revert Errors.VenueNotWhitelisted();
+        if (capBps == 0) revert CircleErrors.VenueNotWhitelisted();
         if (
             (uint256(positionValue_) + uint256(reserved_)) * Constants.BPS
                 > uint256(equity_) * capBps
-        ) revert Errors.PositionCapExceeded();
+        ) revert CircleErrors.PositionCapExceeded();
     }
 
     function _requireWithinDrawdown(uint64 equity_) internal view {
         uint256 dd = HighWaterMark.drawdownBps(
             HighWaterMark.State({ balance: equity_, highWaterMark: highWaterMark })
         );
-        if (dd >= maxDrawdownBps) revert Errors.DrawdownLimitBreached();
+        if (dd >= maxDrawdownBps) revert CircleErrors.DrawdownLimitBreached();
     }
 
     function _release(uint128 cloid, string memory reason) internal {

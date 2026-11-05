@@ -4,7 +4,7 @@ pragma solidity 0.8.24;
 import { Test } from "forge-std/Test.sol";
 import { AgentRegistry } from "../src/AgentRegistry.sol";
 import { IAgentRegistry } from "../src/interfaces/IAgentRegistry.sol";
-import { Errors } from "../src/libraries/Errors.sol";
+import { CircleErrors } from "../src/libraries/CircleErrors.sol";
 import { Constants } from "../src/libraries/Constants.sol";
 import { MockERC20 } from "./mocks/MockERC20.sol";
 
@@ -65,19 +65,19 @@ contract AgentRegistryTest is Test {
         uint256[3] memory bonds = [uint256(1), 2, 3];
         uint256[3] memory ceilings = [uint256(1), 2, 3];
 
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         new AgentRegistry(address(0), guardian, address(bond), bonds, ceilings, UNBOND);
 
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         new AgentRegistry(governance, address(0), address(bond), bonds, ceilings, UNBOND);
 
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         new AgentRegistry(governance, guardian, address(0), bonds, ceilings, UNBOND);
     }
 
     /// An unbonding period past the ceiling could strand builder bonds indefinitely.
     function test_constructorBoundsTheUnbondPeriod() public {
-        vm.expectRevert(Errors.ParameterOutOfBounds.selector);
+        vm.expectRevert(CircleErrors.ParameterOutOfBounds.selector);
         new AgentRegistry(
             governance,
             guardian,
@@ -91,35 +91,35 @@ contract AgentRegistryTest is Test {
     function test_cannotRegisterTwice() public {
         vm.startPrank(builder);
         registry.registerBuilder();
-        vm.expectRevert(Errors.BuilderAlreadyRegistered.selector);
+        vm.expectRevert(CircleErrors.BuilderAlreadyRegistered.selector);
         registry.registerBuilder();
         vm.stopPrank();
     }
 
     function test_bondingRequiresRegistrationAndANonZeroAmount() public {
         vm.prank(builder);
-        vm.expectRevert(Errors.ZeroAmount.selector);
+        vm.expectRevert(CircleErrors.ZeroAmount.selector);
         registry.stakeBond(0);
 
         // Unregistered, and with a real amount, so the registration check is what bites.
         vm.prank(attacker);
-        vm.expectRevert(Errors.BuilderNotRegistered.selector);
+        vm.expectRevert(CircleErrors.BuilderNotRegistered.selector);
         registry.stakeBond(1 * UNIT);
     }
 
     function test_unbondGuards() public {
         vm.prank(attacker);
-        vm.expectRevert(Errors.BuilderNotRegistered.selector);
+        vm.expectRevert(CircleErrors.BuilderNotRegistered.selector);
         registry.requestUnbond(1);
 
         vm.startPrank(builder);
         registry.registerBuilder();
         registry.stakeBond(25_000 * UNIT);
 
-        vm.expectRevert(Errors.ZeroAmount.selector);
+        vm.expectRevert(CircleErrors.ZeroAmount.selector);
         registry.requestUnbond(0);
 
-        vm.expectRevert(Errors.UnbondAmountExceedsBond.selector);
+        vm.expectRevert(CircleErrors.UnbondAmountExceedsBond.selector);
         registry.requestUnbond(25_001 * UNIT);
         vm.stopPrank();
     }
@@ -129,7 +129,7 @@ contract AgentRegistryTest is Test {
         registry.registerBuilder();
         registry.stakeBond(25_000 * UNIT);
 
-        vm.expectRevert(Errors.NoUnbondRequested.selector);
+        vm.expectRevert(CircleErrors.NoUnbondRequested.selector);
         registry.withdrawBond();
         vm.stopPrank();
     }
@@ -157,29 +157,29 @@ contract AgentRegistryTest is Test {
 
     function test_slashGuards() public {
         vm.prank(governance);
-        vm.expectRevert(Errors.BuilderNotRegistered.selector);
+        vm.expectRevert(CircleErrors.BuilderNotRegistered.selector);
         registry.slashBond(attacker, 1, harmedTraders);
 
         vm.prank(builder);
         registry.registerBuilder();
 
         vm.startPrank(governance);
-        vm.expectRevert(Errors.UnbondAmountExceedsBond.selector);
+        vm.expectRevert(CircleErrors.UnbondAmountExceedsBond.selector);
         registry.slashBond(builder, 1, harmedTraders);
 
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         registry.slashBond(builder, 0, address(0));
         vm.stopPrank();
     }
 
     function test_submitListingGuards() public {
         vm.prank(attacker);
-        vm.expectRevert(Errors.BuilderNotRegistered.selector);
+        vm.expectRevert(CircleErrors.BuilderNotRegistered.selector);
         registry.submitListing(agent, keccak256("m"));
 
         vm.startPrank(builder);
         registry.registerBuilder();
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         registry.submitListing(address(0), keccak256("m"));
         vm.stopPrank();
     }
@@ -188,7 +188,7 @@ contract AgentRegistryTest is Test {
         bytes32 id = _registeredBuilder(); // already Live
 
         vm.startPrank(governance);
-        vm.expectRevert(Errors.ListingNotVetting.selector);
+        vm.expectRevert(CircleErrors.ListingNotVetting.selector);
         registry.rejectListing(id);
         vm.stopPrank();
 
@@ -204,13 +204,13 @@ contract AgentRegistryTest is Test {
 
         // A rejected listing cannot then be approved.
         vm.prank(governance);
-        vm.expectRevert(Errors.ListingNotVetting.selector);
+        vm.expectRevert(CircleErrors.ListingNotVetting.selector);
         registry.approveListingAtLaunchTerms(fresh);
     }
 
     function test_suspendUnknownListingReverts() public {
         vm.prank(guardian);
-        vm.expectRevert(Errors.ListingNotFound.selector);
+        vm.expectRevert(CircleErrors.ListingNotFound.selector);
         registry.suspendListing(keccak256("nope"));
     }
 
@@ -218,17 +218,17 @@ contract AgentRegistryTest is Test {
         bytes32 id = _registeredBuilder();
 
         vm.prank(attacker);
-        vm.expectRevert(Errors.NotBuilder.selector);
+        vm.expectRevert(CircleErrors.NotBuilder.selector);
         registry.setAgentAuthority(id, attacker);
 
         vm.prank(builder);
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         registry.setAgentAuthority(id, address(0));
     }
 
     function test_aumDeltaOnUnknownListingReverts() public {
         vm.prank(vaultAddr);
-        vm.expectRevert(Errors.ListingNotFound.selector);
+        vm.expectRevert(CircleErrors.ListingNotFound.selector);
         registry.notifyAumDelta(keccak256("nope"), int256(1));
     }
 
@@ -249,7 +249,7 @@ contract AgentRegistryTest is Test {
 
     function test_governanceSettersRejectZero() public {
         vm.startPrank(governance);
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         registry.setGuardian(address(0));
         vm.stopPrank();
 
@@ -258,7 +258,7 @@ contract AgentRegistryTest is Test {
             governance, guardian, address(bond), [uint256(1), 2, 3], [uint256(1), 2, 3], UNBOND
         );
         vm.prank(governance);
-        vm.expectRevert(Errors.ZeroAddress.selector);
+        vm.expectRevert(CircleErrors.ZeroAddress.selector);
         fresh.setVault(address(0));
     }
 
@@ -266,17 +266,17 @@ contract AgentRegistryTest is Test {
         bytes32 id = _registeredBuilder();
 
         vm.startPrank(attacker);
-        vm.expectRevert(Errors.NotGovernance.selector);
+        vm.expectRevert(CircleErrors.NotGovernance.selector);
         registry.rejectListing(id);
 
-        vm.expectRevert(Errors.NotGovernance.selector);
+        vm.expectRevert(CircleErrors.NotGovernance.selector);
         registry.setGuardian(attacker);
 
-        vm.expectRevert(Errors.NotGovernance.selector);
+        vm.expectRevert(CircleErrors.NotGovernance.selector);
         registry.setVault(attacker);
 
         // Neither governance nor guardian.
-        vm.expectRevert(Errors.NotGuardian.selector);
+        vm.expectRevert(CircleErrors.NotGuardian.selector);
         registry.suspendListing(id);
         vm.stopPrank();
     }
@@ -308,7 +308,7 @@ contract AgentRegistryTest is Test {
         registry.stakeBond(25_000 * UNIT);
         registry.requestUnbond(25_000 * UNIT);
 
-        vm.expectRevert(Errors.UnbondPeriodNotElapsed.selector);
+        vm.expectRevert(CircleErrors.UnbondPeriodNotElapsed.selector);
         registry.withdrawBond();
 
         vm.warp(block.timestamp + UNBOND);
@@ -330,7 +330,7 @@ contract AgentRegistryTest is Test {
         vm.startPrank(builder);
         registry.requestUnbond(25_000 * UNIT);
         vm.warp(block.timestamp + UNBOND);
-        vm.expectRevert(Errors.BondBelowAumCoverage.selector);
+        vm.expectRevert(CircleErrors.BondBelowAumCoverage.selector);
         registry.withdrawBond();
         vm.stopPrank();
 
@@ -360,7 +360,7 @@ contract AgentRegistryTest is Test {
 
     function test_onlyGovernanceCanSlash() public {
         vm.prank(attacker);
-        vm.expectRevert(Errors.NotGovernance.selector);
+        vm.expectRevert(CircleErrors.NotGovernance.selector);
         registry.slashBond(builder, 1, harmedTraders);
     }
 
@@ -419,47 +419,47 @@ contract AgentRegistryTest is Test {
 
         t = _launchTerms();
         t.performanceFeeBps = 10_000; // 100% of profit
-        vm.expectRevert(Errors.ParameterOutOfBounds.selector);
+        vm.expectRevert(CircleErrors.ParameterOutOfBounds.selector);
         registry.approveListing(id, t);
 
         t = _launchTerms();
         t.builderSplitBps = 1_000; // builder cut to 10%
-        vm.expectRevert(Errors.ParameterOutOfBounds.selector);
+        vm.expectRevert(CircleErrors.ParameterOutOfBounds.selector);
         registry.approveListing(id, t);
 
         t = _launchTerms();
         t.executionFeeBps = Constants.MAX_EXECUTION_FEE_BPS + 1;
-        vm.expectRevert(Errors.ParameterOutOfBounds.selector);
+        vm.expectRevert(CircleErrors.ParameterOutOfBounds.selector);
         registry.approveListing(id, t);
 
         t = _launchTerms();
         t.executionBuilderSplitBps = Constants.MIN_EXECUTION_BUILDER_SPLIT_BPS - 1;
-        vm.expectRevert(Errors.ParameterOutOfBounds.selector);
+        vm.expectRevert(CircleErrors.ParameterOutOfBounds.selector);
         registry.approveListing(id, t);
 
         t = _launchTerms();
         t.executionBuilderSplitBps = 10_001; // over 100%
-        vm.expectRevert(Errors.ParameterOutOfBounds.selector);
+        vm.expectRevert(CircleErrors.ParameterOutOfBounds.selector);
         registry.approveListing(id, t);
 
         t = _launchTerms();
         t.positionCapBps = 0;
-        vm.expectRevert(Errors.ParameterOutOfBounds.selector);
+        vm.expectRevert(CircleErrors.ParameterOutOfBounds.selector);
         registry.approveListing(id, t);
 
         t = _launchTerms();
         t.positionCapBps = Constants.MAX_POSITION_CAP_BPS + 1;
-        vm.expectRevert(Errors.ParameterOutOfBounds.selector);
+        vm.expectRevert(CircleErrors.ParameterOutOfBounds.selector);
         registry.approveListing(id, t);
 
         t = _launchTerms();
         t.maxDrawdownBps = 0;
-        vm.expectRevert(Errors.ParameterOutOfBounds.selector);
+        vm.expectRevert(CircleErrors.ParameterOutOfBounds.selector);
         registry.approveListing(id, t);
 
         t = _launchTerms();
         t.maxDrawdownBps = Constants.MAX_DRAWDOWN_BPS_CEILING + 1;
-        vm.expectRevert(Errors.ParameterOutOfBounds.selector);
+        vm.expectRevert(CircleErrors.ParameterOutOfBounds.selector);
         registry.approveListing(id, t);
 
         // The listing is still in Vetting after nine rejections, and launch terms work.
@@ -502,7 +502,7 @@ contract AgentRegistryTest is Test {
     /// up, because the rest of it has to stay in an asset the platform cannot print.
     function test_bondDiscountIsCappedAtHalf() public {
         vm.prank(governance);
-        vm.expectRevert(Errors.ParameterOutOfBounds.selector);
+        vm.expectRevert(CircleErrors.ParameterOutOfBounds.selector);
         registry.setAgentBondDiscount(Constants.MAX_AGENT_BOND_DISCOUNT_BPS + 1);
 
         vm.prank(governance);
@@ -512,7 +512,7 @@ contract AgentRegistryTest is Test {
 
     function test_onlyGovernanceCanSetBondDiscount() public {
         vm.prank(builder);
-        vm.expectRevert(Errors.NotGovernance.selector);
+        vm.expectRevert(CircleErrors.NotGovernance.selector);
         registry.setAgentBondDiscount(1_000);
     }
 
@@ -536,7 +536,7 @@ contract AgentRegistryTest is Test {
         vm.startPrank(builder);
         registry.requestUnbond(registry.getBuilder(builder).bondAmount);
         vm.warp(block.timestamp + 15 days);
-        vm.expectRevert(Errors.BondBelowAumCoverage.selector);
+        vm.expectRevert(CircleErrors.BondBelowAumCoverage.selector);
         registry.withdrawBond();
         vm.stopPrank();
     }
@@ -547,7 +547,7 @@ contract AgentRegistryTest is Test {
         registry.stakeBond(25_000 * UNIT);
         bytes32 id = registry.submitListing(agent, keccak256("m"));
 
-        vm.expectRevert(Errors.NotGovernance.selector);
+        vm.expectRevert(CircleErrors.NotGovernance.selector);
         registry.approveListingAtLaunchTerms(id);
         vm.stopPrank();
     }
@@ -567,7 +567,7 @@ contract AgentRegistryTest is Test {
         address newAgent = makeAddr("newAgent");
 
         vm.prank(attacker);
-        vm.expectRevert(Errors.NotBuilder.selector);
+        vm.expectRevert(CircleErrors.NotBuilder.selector);
         registry.setAgentAuthority(id, attacker);
 
         vm.prank(builder);
@@ -595,7 +595,7 @@ contract AgentRegistryTest is Test {
 
         // Second listing shares the same ceiling — only 5k of headroom is left.
         assertEq(registry.availableAumHeadroom(b), 5_000 * UNIT);
-        vm.expectRevert(Errors.AumCeilingExceeded.selector);
+        vm.expectRevert(CircleErrors.AumCeilingExceeded.selector);
         registry.notifyAumDelta(b, int256(10_000 * UNIT));
         vm.stopPrank();
     }
@@ -603,7 +603,7 @@ contract AgentRegistryTest is Test {
     function test_onlyVaultCanMoveAum() public {
         bytes32 id = _registeredBuilder();
         vm.prank(attacker);
-        vm.expectRevert(Errors.NotVault.selector);
+        vm.expectRevert(CircleErrors.NotVault.selector);
         registry.notifyAumDelta(id, int256(1_000 * UNIT));
     }
 
@@ -611,7 +611,7 @@ contract AgentRegistryTest is Test {
     /// contract that mints headroom out of nothing.
     function test_vaultIsSetOnce() public {
         vm.prank(governance);
-        vm.expectRevert(Errors.AlreadySet.selector);
+        vm.expectRevert(CircleErrors.AlreadySet.selector);
         registry.setVault(attacker);
     }
 }
