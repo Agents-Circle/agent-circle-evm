@@ -56,6 +56,14 @@ Four things follow, and they are not all bookkeeping:
 Points 1 and 2 are the blocking ones. Nothing in `src/adapters/` can be written honestly
 until this is resolved.
 
+> **Note, 6 November 2026.** Point 3 is worse than "diverges". Because the singleton
+> pools every trader's tokens, a fill the vault cannot see leaves the paying vault's
+> `idle` stale high; `_release` then frees the reservation and `_availableIdle` offers
+> the stale figure to `withdraw`, so one trader can withdraw against another's balance.
+> That makes point 3 a solvency gap, not bookkeeping, and it is as blocking as 1 and 2.
+> It does not change the decision — clones fix all three — only the ranking above and
+> the README's former claim that the aggregate stayed safe.
+
 ## Decision
 
 Give each vault its own address, deployed as an EIP-1167 minimal proxy behind a factory, so
