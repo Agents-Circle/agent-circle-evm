@@ -399,14 +399,28 @@ and the vault's custody is of quote tokens.
 
 What is still genuinely open is per-vault attribution of an order-book settlement. When
 the exchange pulls from the pooled balance, no vault's `idle` decreases, because the
-vault is not in that transaction. The aggregate stays solvent — every live reservation
-is backed by its own vault's idle — but reconciling a settled fill back to the vault
-that caused it needs a settlement notification. The exchange hardcodes `order.maker` as
+vault is not in that transaction, and reconciling a settled fill back to the vault that
+caused it needs a settlement notification. The exchange hardcodes `order.maker` as
 both the source of collateral and the destination for outcome tokens, so a singleton
 vault cannot express whose position is whose — see
 [ADR-0001](docs/adr/0001-vault-topology.md), which chose per-vault clones (accepted 2
 November 2026). The HyperEVM vault is written as a clone from the start; converting this
 Polygon singleton is deferred to Phase 6.
+
+**This is a solvency gap, not only a bookkeeping one.** An earlier version of this
+section claimed the aggregate stays solvent, on the grounds that every live reservation
+is backed by its own vault's idle. That holds until a fill and not after one. Once the
+exchange has pulled, the paying vault's `idle` is stale high by the amount pulled,
+`_release` returns `reserved` to zero on cancel or expiry, and `_availableIdle` then
+offers the whole stale figure to `withdraw`. The sum of every vault's `idle` exceeds the
+contract's token balance, and the shortfall lands on whoever withdraws last. ADR-0001
+point 3 names the cause — settlement never calls us — and this is what follows from it.
+
+Nothing reaches it today: the vault implements no EIP-1271 entry point, so no exchange
+can match an order against it, and `src/adapters/` does not exist. The allowance is live
+regardless, granted by `authoriseOrder` and mirrored by `_syncSettlementAllowance`, so
+the gap is one whitelisted order-book adapter away rather than one feature away. The
+clone conversion lands before any adapter does.
 
 ### What is not built, and why
 
@@ -414,8 +428,9 @@ The venue-facing signature entry point. Everything above is the seam it plugs in
 Q1 coming back positive means it is now buildable. The allowance mirroring it needed to
 sit alongside is in place, so this is no longer blocked on anything but the work.
 
-Per-vault attribution of an order-book settlement, described above. The aggregate is
-safe; the bookkeeping is not yet.
+Per-vault attribution of an order-book settlement, described above. Neither the
+bookkeeping nor the aggregate survives a fill; per-vault clones fix both, because the
+vault that traded is the address the exchange pulls from.
 
 `src/adapters/` still does not exist. `IVenueAdapter.execute` remains documented as
 requiring atomicity, and an adapter that merely queues an order does not satisfy it and
