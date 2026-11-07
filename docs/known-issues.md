@@ -5,7 +5,7 @@ limit we state publicly or an open design question, and none is a hidden bug. A
 static-analysis finding that is accepted rather than fixed gets recorded here with its
 reason.
 
-Status as of 3 November 2026. Nothing is deployed, and nothing has been audited.
+Status as of 6 November 2026. Nothing is deployed, and nothing has been audited.
 
 ## Stated limits (the product says these out loud)
 
@@ -23,6 +23,17 @@ Status as of 3 November 2026. Nothing is deployed, and nothing has been audited.
 - **The execution fee underpays a high-frequency agent between reconciles.** A position
   opened and closed between two reconciles shows no net change. That's a revenue loss
   for us, not a harm to the trader. See `HLAgentVault._accrueExecutionFees`.
+- **The Polygon singleton goes short once an order-book fill settles.** Settlement pulls
+  from the pooled balance without calling the vault, so the paying vault's `idle` stays
+  high. `_release` then returns `reserved` to zero on cancel or expiry and
+  `_availableIdle` offers the whole stale figure to `withdraw`, so the sum of every
+  vault's `idle` exceeds the contract's token balance and the shortfall lands on whoever
+  withdraws last. This is ADR-0001 point 3 followed through to its consequence, and it
+  is a solvency gap rather than the bookkeeping inconvenience README §4 previously
+  called it. Unreachable today — no EIP-1271 entry point, no `src/adapters/`, nothing
+  deployed — but the allowance is granted at `authoriseOrder`, so whitelisting an
+  order-book adapter would reach it. The per-vault clones of ADR-0001 fix it
+  structurally and must land first. Raised in external correspondence, 5 November 2026.
 
 ## Open design questions (decide before the audit freeze)
 
